@@ -471,8 +471,8 @@ function initializeWorldMap(cultures) {
         const map = L.map(mapElement).setView([20, 0], 2);
         worldMapInstance = map;
         
-        // Add OpenStreetMap tiles
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        // Add OpenStreetMap tiles with English labels
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png?lang=en', {
             attribution: '© OpenStreetMap contributors',
             maxZoom: 19,
             minZoom: 2
