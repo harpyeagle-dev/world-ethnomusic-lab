@@ -547,14 +547,14 @@ h3 {
     margin-bottom: 15px;
     width: 100%;
     max-width: 300px;
-    background-color: white;
-    color: #2c3e50;
+    background-color: white !important;
+    color: #2c3e50 !important;
     font-weight: 500;
 }
 
 .select-dropdown option {
-    background-color: white;
-    color: #2c3e50;
+    background-color: white !important;
+    color: #2c3e50 !important;
     padding: 8px;
 }
 
