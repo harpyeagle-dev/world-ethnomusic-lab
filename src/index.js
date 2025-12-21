@@ -390,34 +390,39 @@ function initializeAudioUnlockOverlay() {
     const overlay = document.getElementById('audio-unlock-overlay');
     const btn = document.getElementById('audio-unlock-button');
     if (!overlay || !btn) return;
+    
     const shouldShow = () => {
         const isMobile = /iPad|iPhone|iPod|Android/i.test(navigator.userAgent);
-        return isMobile || (audioContext && audioContext.state === 'suspended');
+        const isSafari = /Safari/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent);
+        return isMobile || isSafari || (audioContext && audioContext.state === 'suspended');
     };
-    const hide = () => overlay.style.display = 'none';
-    const show = () => overlay.style.display = 'flex';
-
-    if (shouldShow()) show();
-    btn.addEventListener('click', async () => {
+    
+    const hide = () => {
+        overlay.style.display = 'none';
+        showToast('success', 'Audio enabled');
+    };
+    const show = () => {
+        overlay.style.display = 'flex';
+    };
+    
+    const resumeAudio = async () => {
         try {
             if (audioContext && audioContext.state === 'suspended') {
                 await audioContext.resume();
+                hide();
             }
-            hide();
         } catch (e) {
             console.warn('Audio resume failed:', e);
         }
-    });
-    // Any user gesture can unlock
-    ['touchstart','mousedown','keydown'].forEach(ev => {
-        window.addEventListener(ev, async () => {
-            try {
-                if (audioContext && audioContext.state === 'suspended') {
-                    await audioContext.resume();
-                }
-                hide();
-            } catch {}
-        }, { once: true, passive: true });
+    };
+
+    if (shouldShow()) show();
+    
+    btn.addEventListener('click', resumeAudio);
+    
+    // Any user gesture can unlock audio in Safari
+    ['touchstart', 'mousedown', 'keydown', 'click'].forEach(ev => {
+        document.addEventListener(ev, resumeAudio, { once: true, passive: true });
     });
 }
 
