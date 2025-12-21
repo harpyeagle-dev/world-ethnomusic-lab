@@ -6,6 +6,7 @@ import 'leaflet/dist/leaflet.css';
 import { AudioAnalyzer } from './audioAnalyzer.js';
 import { getAllCultures, getCultureById, matchCulture } from './culturesData.js';
 import { getAllExpandedCultures } from './expandedCultures.js';
+import { dedupeCultures } from './utils/dedup.js';
 import { RealTimePitchDetector, Visualizer3D, ProgressTracker, musicalGlossary } from './advancedFeatures.js';
 import { MusicComposer, Looper, PitchMatchingGame, RhythmDictation, InstrumentIdentifier, downloadJSON, generatePDF } from './games.js';
 import { culturalQuizQuestions, getRandomQuestions, lessonPlans, practiceExercises, accessibilityHelpers, mobileOptimizations } from './extendedFeatures.js';
@@ -26,6 +27,44 @@ let pitchGame = null;
 let isDarkMode = false;
 let analysisCancelled = false;
 let worldMapInstance = null; // Cache Leaflet map to fix size when tab toggles
+
+// Lightweight toast notifications (non-blocking replacement for alert())
+function showToast(type, message, duration = 3000) {
+    try {
+        let container = document.getElementById('toast-container');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'toast-container';
+            container.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:3000;display:flex;flex-direction:column;gap:10px;';
+            document.body.appendChild(container);
+        }
+        const colors = {
+            success: '#4caf50',
+            error: '#f44336',
+            warning: '#ff9800',
+            info: '#2196f3'
+        };
+        const icons = {
+            success: '✅',
+            error: '❌',
+            warning: '⚠️',
+            info: 'ℹ️'
+        };
+        const toast = document.createElement('div');
+        toast.style.cssText = 'min-width:260px;max-width:360px;padding:12px 14px;background:#fff;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);border-left:4px solid '+(colors[type]||colors.info)+';font-size:0.95em;display:flex;align-items:center;gap:8px;';
+        toast.innerHTML = `<span>${icons[type]||icons.info}</span><div>${message}</div>`;
+        container.appendChild(toast);
+        setTimeout(() => {
+            toast.style.transition = 'opacity 200ms ease-out, transform 200ms ease-out';
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateY(8px)';
+            setTimeout(() => toast.remove(), 220);
+        }, duration);
+    } catch (e) {
+        // Fallback silently
+        console.warn('Toast failed:', e);
+    }
+}
 
 // Initialize the app
 document.addEventListener('DOMContentLoaded', async () => {
@@ -214,7 +253,7 @@ function initializeTeacherDashboard() {
             if (dashboardTimer) clearInterval(dashboardTimer);
             dashboardTimer = null;
             saveDashboardSession();
-            alert('Session ended. Data saved locally.');
+            showToast('success', 'Session ended. Data saved locally.');
         }
     });
     
@@ -231,7 +270,7 @@ function initializeTeacherDashboard() {
             document.getElementById('active-session-panel').style.display = 'none';
             document.getElementById('start-session-btn').style.display = 'inline-block';
             document.getElementById('end-session-btn').style.display = 'none';
-            alert('Session data cleared.');
+            showToast('success', 'Session data cleared.');
         }
     });
 }
@@ -308,7 +347,7 @@ function updateDashboardDisplay() {
 
 function exportSessionToCSV() {
     if (!dashboardSession) {
-        alert('No session data to export');
+        showToast('warning', 'No session data to export');
         return;
     }
     
@@ -386,26 +425,15 @@ function initializeAudioUnlockOverlay() {
 function initializeCultureExplorer() {
     const basicCultures = getAllCultures();
     const expandedCultures = getAllExpandedCultures();
-
-    // Deduplicate: prefer expanded entries, then add basics not present
-    const byId = new Map();
-    expandedCultures.forEach(c => byId.set(c.id, c));
-    basicCultures.forEach(c => {
-        if (!byId.has(c.id)) byId.set(c.id, c);
-    });
-
-    // Extra guard: dedupe by name in case different ids share same culture name
-    const seenNames = new Set();
-    const cultures = Array.from(byId.values()).filter(c => {
-        const key = (c.name || '').trim().toLowerCase();
-        if (seenNames.has(key)) return false;
-        seenNames.add(key);
-        return true;
-    });
+    const cultures = dedupeCultures(basicCultures, expandedCultures);
     const cultureGrid = document.getElementById('culture-grid');
     const cultureCount = document.getElementById('culture-count');
     if (cultureCount) {
         cultureCount.textContent = cultures.length.toString();
+    }
+    // Clear existing grid to avoid duplicates on re-initialization
+    if (cultureGrid) {
+        cultureGrid.innerHTML = '';
     }
     
     // Initialize world map
@@ -454,80 +482,82 @@ function initializeWorldMap(cultures) {
             map.invalidateSize();
         });
     
-    // Define region coordinates (approx centers) and colors
-    const regionCoordinates = {
-        'East Asia': { lat: 35, lng: 105, color: '#FF6B6B' },
-        'South Asia': { lat: 20, lng: 78, color: '#4ECDC4' },
-        'West Africa': { lat: 5, lng: -5, color: '#FFE66D' },
-        'Middle East': { lat: 25, lng: 50, color: '#95E1D3' },
-        'Southeast Asia': { lat: 5, lng: 115, color: '#F38181' },
-        'Europe': { lat: 50, lng: 10, color: '#AA96DA' },
-        'Latin America': { lat: -10, lng: -60, color: '#FCBAD3' },
-        'Aboriginal Australian': { lat: -25, lng: 133, color: '#A8D8EA' },
-        'Sub-Saharan Africa': { lat: -5, lng: 20, color: '#F7DC6F' },
-        'Mediterranean': { lat: 40, lng: 15, color: '#BB8FCE' }
+    // Define precise coordinates for each culture and regional colors
+    const cultureCoordinates = {
+        'west-african': { lat: 12, lng: -5, color: '#FFE66D', region: 'West Africa' },
+        'indian-classical': { lat: 23, lng: 78, color: '#4ECDC4', region: 'South Asia' },
+        'chinese-traditional': { lat: 35, lng: 110, color: '#FF6B6B', region: 'East Asia' },
+        'middle-eastern': { lat: 30, lng: 45, color: '#95E1D3', region: 'Middle East' },
+        'latin-american': { lat: -15, lng: -60, color: '#FCBAD3', region: 'Latin America' },
+        'aboriginal-australian': { lat: -25, lng: 133, color: '#A8D8EA', region: 'Australia' },
+        'european-folk': { lat: 52, lng: 10, color: '#AA96DA', region: 'Europe' },
+        'japanese-traditional': { lat: 36, lng: 138, color: '#FF6B6B', region: 'East Asia' },
+        'mongolian-throat-singing': { lat: 47, lng: 103, color: '#FFA07A', region: 'Central Asia' },
+        'indonesian-gamelan': { lat: -7, lng: 110, color: '#F38181', region: 'Southeast Asia' },
+        'flamenco': { lat: 37, lng: -5, color: '#BB8FCE', region: 'Spain' },
+        'andean': { lat: -15, lng: -70, color: '#98D8C8', region: 'South America' },
+        'bluegrass': { lat: 37, lng: -85, color: '#C9ADA7', region: 'North America' },
+        'brazilian-samba': { lat: -23, lng: -43, color: '#F4A261', region: 'South America' },
+        'caribbean-steel-pan': { lat: 11, lng: -61, color: '#E76F51', region: 'Caribbean' },
+        'korean-traditional': { lat: 37, lng: 127, color: '#FF6B6B', region: 'East Asia' },
+        'venezuelan-joropo': { lat: 8, lng: -66, color: '#90A955', region: 'Venezuela' },
+        'caribbean-rhythms': { lat: 18, lng: -75, color: '#F28482', region: 'Caribbean Islands' }
     };
     
-    // Group cultures by region and add markers
-    const regionMarkers = {};
-    let legendHTML = '';
-    
-    cultures.forEach(culture => {
-        const region = culture.region;
-        if (regionCoordinates[region]) {
-            const coords = regionCoordinates[region];
-            
-            if (!regionMarkers[region]) {
-                regionMarkers[region] = [];
-                // Add legend entry
-                legendHTML += `
-                    <div style="padding: 10px; background: white; border-radius: 6px; border-left: 4px solid ${coords.color}; cursor: pointer;" data-region="${region}">
-                        <strong style="color: ${coords.color};">●</strong> ${region}
-                    </div>
-                `;
-            }
-            
-            regionMarkers[region].push({
-                coords: coords,
-                culture: culture,
-                offset: regionMarkers[region].length * 0.5 // Offset for clusters
-            });
+    // Build legend by unique regions
+    const regionColors = {};
+    const legendRegions = new Set();
+    Object.values(cultureCoordinates).forEach(({ region, color }) => {
+        if (!regionColors[region]) {
+            regionColors[region] = color;
+            legendRegions.add(region);
         }
     });
     
-    // Add markers to map
-    Object.entries(regionMarkers).forEach(([region, markers]) => {
-        const color = regionCoordinates[region].color;
-        
-        markers.forEach(({ coords, culture, offset }) => {
+    let legendHTML = '';
+    Array.from(legendRegions).sort().forEach(region => {
+        legendHTML += `
+            <div style="padding: 10px; background: white; border-radius: 6px; border-left: 4px solid ${regionColors[region]}; cursor: pointer;" data-region="${region}">
+                <strong style="color: ${regionColors[region]};">●</strong> ${region}
+            </div>
+        `;
+    });
+    
+    // Add individual markers for each culture
+    cultures.forEach(culture => {
+        const cultureCoord = cultureCoordinates[culture.id];
+        if (cultureCoord) {
             const marker = L.circleMarker(
-                [coords.lat + offset, coords.lng + offset],
+                [cultureCoord.lat, cultureCoord.lng],
                 {
-                    radius: 8,
-                    fillColor: color,
+                    radius: 10,
+                    fillColor: cultureCoord.color,
                     color: '#333',
                     weight: 2,
-                    opacity: 0.8,
-                    fillOpacity: 0.7
+                    opacity: 0.9,
+                    fillOpacity: 0.75
                 }
             ).addTo(map);
             
             // Popup with culture info
             marker.bindPopup(`
-                <div style="font-weight: bold; margin-bottom: 5px;">
+                <div style="font-weight: bold; margin-bottom: 5px; font-size: 1.1em;">
                     ${culture.emoji} ${culture.name}
                 </div>
-                <div style="font-size: 0.85em;">
-                    <strong>Region:</strong> ${culture.region}<br>
-                    <strong>Description:</strong> ${culture.description.substring(0, 60)}...
+                <div style="font-size: 0.85em; line-height: 1.4;">
+                    <strong>Region:</strong> ${cultureCoord.region}<br>
+                    <strong>Description:</strong> ${culture.description.substring(0, 80)}...
                 </div>
+                <button style="margin-top: 8px; padding: 4px 8px; background: ${cultureCoord.color}; border: none; border-radius: 4px; cursor: pointer; font-size: 0.8em;" onclick="document.querySelector('[data-tab=explore]').click();">
+                    View Details
+                </button>
             `);
             
-            // Click to filter cultures
+            // Click to filter cultures by region
             marker.on('click', () => {
-                filterCulturesByRegion(region);
+                filterCulturesByRegion(cultureCoord.region);
             });
-        });
+        }
     });
     
         // Add legend event listeners
@@ -544,15 +574,25 @@ function initializeWorldMap(cultures) {
     // Reset filter
     resetBtn?.addEventListener('click', () => {
         filterCulturesByRegion(null);
+        legendElement?.querySelectorAll('[data-region]').forEach(item => {
+            item.style.backgroundColor = '';
+            item.style.transform = '';
+        });
     });
     
-    // Fit map to bounds of all markers
-    const group = new L.featureGroup(Object.values(regionMarkers).flat().map(m => 
-        L.circleMarker([m.coords.lat, m.coords.lng])
-    ));
-    if (group.getLayers().length > 0) {
-        map.fitBounds(group.getBounds().pad(0.1));
+    // Fit map to show all culture markers
+    const allMarkers = cultures
+        .filter(c => cultureCoordinates[c.id])
+        .map(c => {
+            const coord = cultureCoordinates[c.id];
+            return L.circleMarker([coord.lat, coord.lng]);
+        });
+    
+    if (allMarkers.length > 0) {
+        const group = new L.featureGroup(allMarkers);
+        map.fitBounds(group.getBounds().pad(0.15));
     }
+    
     // Ensure map tiles render correctly after layout and when window resizes
     setTimeout(() => map.invalidateSize(), 200);
     setTimeout(() => map.invalidateSize(), 600);
@@ -567,9 +607,30 @@ function filterCulturesByRegion(region) {
     const cultureCards = document.querySelectorAll('.culture-card');
     let visibleCount = 0;
     
+    // Map culture region text to the new region naming
+    const regionMap = {
+        'West Africa': 'West Africa',
+        'South Asia': 'South Asia',
+        'East Asia': 'East Asia',
+        'Middle East': 'Middle East',
+        'Latin America': 'Latin America',
+        'Australia': 'Australia',
+        'Europe': 'Europe',
+        'Spain': 'Spain',
+        'Central Asia': 'Central Asia',
+        'Southeast Asia': 'Southeast Asia',
+        'South America': 'South America',
+        'North America': 'North America',
+        'Caribbean': 'Caribbean',
+        'Venezuela': 'Venezuela',
+        'Caribbean Islands': 'Caribbean Islands'
+    };
+    
     cultureCards.forEach(card => {
         const cardRegion = card.querySelector('p').textContent;
-        if (!region || cardRegion === region) {
+        const mappedRegion = regionMap[cardRegion] || cardRegion;
+        
+        if (!region || mappedRegion === region || cardRegion === region) {
             card.style.display = 'block';
             card.style.opacity = '1';
             visibleCount++;
@@ -794,7 +855,7 @@ function initializeAnalyzer() {
             
             if (!analysisResults) {
                 console.error('analysis-results element not found!');
-                alert('Error: Results container not found');
+                showToast('error', 'Results container not found');
                 return;
             }
             
@@ -2190,23 +2251,20 @@ function initializeRecorder() {
     let mediaStream = null;
     let recordingMimeType = 'audio/webm'; // Default, will be updated
     
-    alert('🔍 initializeRecorder called:\nrecord-btn: ' + (recordBtn ? 'FOUND' : 'NOT FOUND') + '\nstop-record-btn: ' + (stopRecordBtn ? 'FOUND' : 'NOT FOUND') + '\nrecording-status: ' + (recordingStatus ? 'FOUND' : 'NOT FOUND'));
-    
     if (!recordBtn || !stopRecordBtn) {
-        alert('❌ ERROR: Missing button elements! Cannot initialize recorder');
+        showToast('error', 'Missing recorder UI elements');
         return;
     }
     
     recordBtn.addEventListener('click', async () => {
-        alert('🎤 Record button clicked!');
         try {
             if (!audioContext) {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
             }
             
-            alert('📡 Requesting microphone...');
+            showToast('info', 'Requesting microphone access...');
             mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            alert('✅ Microphone access granted! Starting recording...');
+            showToast('success', 'Microphone access granted');
             
             // Safari works best with WAV format for MediaRecorder output
             let mimeType = 'audio/wav';
@@ -2226,7 +2284,7 @@ function initializeRecorder() {
             // If none of above, don't specify mimeType and use browser default
             
             recordingMimeType = mimeType;
-            alert('🎙️ Format: ' + mimeType);
+            console.log('Recording format:', mimeType);
             mediaRecorder = new MediaRecorder(mediaStream, Object.keys(options).length > 0 ? options : undefined);
             audioChunks = [];
             
@@ -2235,33 +2293,32 @@ function initializeRecorder() {
             });
             
             mediaRecorder.addEventListener('stop', () => {
-                alert('⏹️ Stop event triggered');
                 
                 const audioBlob = new Blob(audioChunks, { type: recordingMimeType });
-                alert('📦 Audio blob created:\nSize: ' + audioBlob.size + ' bytes\nType: ' + audioBlob.type + '\nChunks: ' + audioChunks.length);
+                console.log('Audio blob created', { size: audioBlob.size, type: audioBlob.type, chunks: audioChunks.length });
                 
                 if (audioBlob.size === 0) {
-                    alert('❌ ERROR: Audio blob is EMPTY! No data was recorded.');
+                    showToast('error', 'Recording failed: empty audio blob');
                     return;
                 }
                 
                 const audioUrl = URL.createObjectURL(audioBlob);
-                alert('🔗 Object URL created: ' + (audioUrl ? 'SUCCESS' : 'FAILED'));
+                console.log('Object URL created:', !!audioUrl);
                 
                 // Get elements
                 const audio = document.getElementById('audio-playback');
                 const recordedAudioDiv = document.getElementById('recorded-audio');
                 const analyzeBtn = document.getElementById('analyze-recording');
                 
-                alert('📍 Looking for elements:\naudio: ' + (audio ? 'FOUND' : 'NOT FOUND') + '\nrecorded-audio div: ' + (recordedAudioDiv ? 'FOUND' : 'NOT FOUND'));
+                console.log('Recorded audio UI elements', { audioFound: !!audio, recordedAudioDivFound: !!recordedAudioDiv });
                 
                 // Verify elements exist
                 if (!audio) {
-                    alert('❌ ERROR: Audio player (audio-playback) not found!');
+                    showToast('error', 'Audio player not found');
                     return;
                 }
                 if (!recordedAudioDiv) {
-                    alert('❌ ERROR: Recording div (recorded-audio) not found!');
+                    showToast('error', 'Recording container not found');
                     return;
                 }
                 
@@ -2274,7 +2331,7 @@ function initializeRecorder() {
                 recordedAudioDiv.style.visibility = 'visible';
                 recordedAudioDiv.style.opacity = '1';
                 
-                alert('✅ Audio player visible! Size: ' + (audioBlob.size / 1024).toFixed(1) + ' KB');
+                showToast('success', `Recording ready (${(audioBlob.size / 1024).toFixed(1)} KB)`);
                 
                 // Stop media stream tracks
                 if (mediaStream) {
@@ -2328,13 +2385,10 @@ function initializeRecorder() {
     });
     
     stopRecordBtn.addEventListener('click', () => {
-        alert('🔴 STOP BUTTON CLICKED - mediaRecorder state: ' + (mediaRecorder ? mediaRecorder.state : 'NO RECORDER'));
         if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-            alert('🔴 CALLING mediaRecorder.stop()...');
             mediaRecorder.stop();
-            alert('🔴 stop() called, state is now: ' + mediaRecorder.state);
         } else {
-            alert('🔴 ERROR: Cannot stop - mediaRecorder is null or state is: ' + (mediaRecorder ? mediaRecorder.state : 'NO RECORDER'));
+            showToast('error', 'Cannot stop — no active recording');
         }
         recordBtn.disabled = false;
         stopRecordBtn.disabled = true;
@@ -2530,7 +2584,7 @@ async function analyzeRecording(audioBlob) {
                 </p>
             </div>
         `;
-        alert('Analysis error: ' + error.message);
+        showToast('error', 'Analysis error: ' + error.message);
     }
 }
 
@@ -2598,7 +2652,7 @@ function initializeLivePitch() {
             detectPitchLoop();
             progressTracker.addAchievement('used_live_pitch');
         } else {
-            alert('Microphone access denied. Please allow microphone access to use this feature.');
+            showToast('error', 'Microphone access denied. Please allow microphone access.');
         }
     });
     
@@ -2643,7 +2697,7 @@ function initializeComposer() {
         const culture2Id = culture2Select?.value;
         
         if (!culture1Id || !culture2Id) {
-            alert('Please select two cultures');
+            showToast('warning', 'Please select two cultures');
             return;
         }
         
@@ -2849,15 +2903,15 @@ function initializeComposer() {
     
     // Loop controls
     document.getElementById('record-loop')?.addEventListener('click', () => {
-        alert('Loop recording feature coming soon!');
+        showToast('info', 'Loop recording feature coming soon');
     });
     
     document.getElementById('stop-loop')?.addEventListener('click', () => {
-        alert('Loop stopped');
+        showToast('info', 'Loop stopped');
     });
     
     document.getElementById('play-loops')?.addEventListener('click', () => {
-        alert('Play loops feature coming soon!');
+        showToast('info', 'Play loops feature coming soon');
     });
     
     document.getElementById('clear-loops')?.addEventListener('click', () => {

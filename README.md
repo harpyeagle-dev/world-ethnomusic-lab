@@ -1,5 +1,8 @@
 # 🎵 Ethnomusicology Explorer
 
+[![CI](https://github.com/harpyeagle-dev/world-music-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/harpyeagle-dev/world-music-lab/actions/workflows/ci.yml)
+[![Deploy](https://github.com/harpyeagle-dev/world-music-lab/actions/workflows/pages.yml/badge.svg)](https://github.com/harpyeagle-dev/world-music-lab/actions/workflows/pages.yml)
+
 An interactive computational ethnomusicology application designed for all ages to explore, analyze, and learn about music from cultures around the world.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
@@ -96,6 +99,18 @@ npm run build
 ```
 
 The production-ready files will be generated in the `dist/` directory.
+
+### Deploying on GitHub Pages
+
+- Enable GitHub Pages in your repository: Settings → Pages → Source: GitHub Actions.
+- The workflow in [.github/workflows/pages.yml](.github/workflows/pages.yml) builds and deploys on `main` pushes or manual runs.
+- After deployment, your site will be available at your repository’s Pages URL.
+
+To trigger a manual deploy:
+
+```bash
+# From the Actions tab, run "Deploy to GitHub Pages" workflow
+```
 
 ## 🎯 How to Use
 
