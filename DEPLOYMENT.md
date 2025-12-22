@@ -36,26 +36,15 @@ Notes
 - The file netlify.toml has been disabled; do not rely on it for deploys.
 - If you need to change the Node version or cache behavior, edit .github/workflows/pages.yml.
 
-### Steps:
-```bash
-npm install -g surge
-cd /Users/admin/Computational\ Ethnousicology\ App/dist
-surge
-# Follow prompts, get URL like: https://random-name.surge.sh
-```
-
----
-
-## Current Status:
-- ✅ Build: `dist/` folder ready
+## Current Status
+- ✅ Build: dist/ folder ready
+- ✅ GitHub Pages workflow configured
 - ✅ PWA: Service worker + manifest configured
 - ✅ Offline: Core assets cached
-- ✅ netlify.toml: Auto-deployment configured
 
-## Recommended Next Steps:
-1. Add PWA icons to manifest.json for install prompts
-2. Create GitHub repo and push code
-3. Deploy via Netlify (takes 2 min)
-4. Share the resulting URL with students/teachers
+## Recommended Next Steps
+1. Verify GitHub Pages is enabled (Settings → Pages → Source: GitHub Actions)
+2. Push changes to main and wait for the Pages workflow to complete
+3. Share the GitHub Pages URL with stakeholders
 
-Questions? Check the app's README.md for more details.
+For details, see README.md.
