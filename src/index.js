@@ -2625,13 +2625,36 @@ async function analyzeRecording(audioBlob) {
             const tempoRange = culture.characteristics.tempo.split('-').map(t => parseInt(t));
             const avgTempo = (tempoRange[0] + tempoRange[1]) / 2;
             
+            // Tempo matching (more granular scoring)
             const tempoDiff = Math.abs(rhythmAnalysis.tempo - avgTempo);
-            if (tempoDiff < 20) score += 3;
-            else if (tempoDiff < 40) score += 2;
-            else if (tempoDiff < 60) score += 1;
+            if (tempoDiff < 15) score += 4;
+            else if (tempoDiff < 30) score += 3;
+            else if (tempoDiff < 50) score += 2;
+            else if (tempoDiff < 75) score += 1;
             
-            if (rhythmAnalysis.regularity > 0.7 && culture.characteristics.rhythm.includes('regular')) score += 2;
-            if (rhythmAnalysis.regularity < 0.5 && culture.characteristics.rhythm.includes('complex')) score += 2;
+            // Rhythm regularity matching
+            if (rhythmAnalysis.regularity > 0.7 && culture.characteristics.rhythm.includes('regular')) score += 3;
+            if (rhythmAnalysis.regularity < 0.5 && culture.characteristics.rhythm.includes('complex')) score += 3;
+            if (rhythmAnalysis.regularity >= 0.5 && rhythmAnalysis.regularity <= 0.7) score += 1; // moderate
+            
+            // Timbre/brightness matching
+            if (timbreAnalysis.brightness) {
+                if (timbreAnalysis.brightness > 0.6 && culture.characteristics.instruments.toLowerCase().includes('metal')) score += 2;
+                if (timbreAnalysis.brightness > 0.6 && culture.characteristics.instruments.toLowerCase().includes('percussion')) score += 2;
+                if (timbreAnalysis.brightness < 0.4 && culture.characteristics.instruments.toLowerCase().includes('drum')) score += 2;
+                if (timbreAnalysis.brightness < 0.4 && culture.characteristics.instruments.toLowerCase().includes('string')) score += 1;
+            }
+            
+            // Pitch/frequency matching
+            if (pitchAnalysis.dominantFrequency > 0) {
+                if (pitchAnalysis.dominantFrequency > 300 && culture.characteristics.instruments.toLowerCase().includes('flute')) score += 2;
+                if (pitchAnalysis.dominantFrequency > 300 && culture.characteristics.instruments.toLowerCase().includes('vocal')) score += 1;
+                if (pitchAnalysis.dominantFrequency < 200 && culture.characteristics.instruments.toLowerCase().includes('drum')) score += 2;
+            }
+            
+            // Beat count matching (for rhythmic complexity)
+            if (rhythmAnalysis.peakCount > 20 && culture.characteristics.rhythm.includes('complex')) score += 2;
+            if (rhythmAnalysis.peakCount < 10 && culture.characteristics.rhythm.includes('simple')) score += 1;
             
             if (score > 0) {
                 matches.push({ culture, score });
@@ -2653,7 +2676,7 @@ async function analyzeRecording(audioBlob) {
                         <div style="margin: 10px 0; padding: 12px; background: white; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
                             <strong style="font-size: 1.1em;">${i + 1}. ${match.culture.emoji} ${match.culture.name}</strong>
                             <p style="margin: 5px 0 0; font-size: 0.85em; color: #555;">
-                                <strong>Match Score:</strong> ${match.score}/7 | 
+                                <strong>Match Score:</strong> ${match.score}/19 | 
                                 <strong>Typical Tempo:</strong> ${match.culture.characteristics.tempo} BPM
                             </p>
                             <p style="margin: 5px 0 0; font-size: 0.85em; color: #666;">
