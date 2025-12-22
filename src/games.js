@@ -96,9 +96,25 @@ export class MusicComposer {
 
     generateMelody(scale, length = 8) {
         const melody = [];
+        let lastNote = null;
+        
         for (let i = 0; i < length; i++) {
-            const note = scale[Math.floor(Math.random() * scale.length)];
+            // Use weighted probability to favor stepwise motion over large leaps
+            let note;
+            if (lastNote === null || Math.random() > 0.6) {
+                // Random note selection
+                note = scale[Math.floor(Math.random() * scale.length)];
+            } else {
+                // Favor nearby notes for more musical results
+                const lastIndex = scale.indexOf(lastNote);
+                const nearbyRange = 3;
+                const minIndex = Math.max(0, lastIndex - nearbyRange);
+                const maxIndex = Math.min(scale.length - 1, lastIndex + nearbyRange);
+                const nearbyNotes = scale.slice(minIndex, maxIndex + 1);
+                note = nearbyNotes[Math.floor(Math.random() * nearbyNotes.length)];
+            }
             melody.push(note);
+            lastNote = note;
         }
         return melody;
     }

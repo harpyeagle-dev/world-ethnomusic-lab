@@ -66,9 +66,138 @@ function showToast(type, message, duration = 3000) {
     }
 }
 
+// AI Generate - GLOBAL FUNCTION (defined early, before DOM init)
+window.generateAIComposition = function() {
+    try {
+        console.log('=== AI GENERATE CALLED ===');
+        
+        const canvas = document.getElementById('composition-canvas');
+        if (!canvas) {
+            alert('Canvas not found - make sure you are on the Compose tab');
+            showToast('error', 'Canvas not found');
+            return;
+        }
+        
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+            alert('Failed to get canvas context');
+            showToast('error', 'Canvas context failed');
+            return;
+        }
+        
+        // Check composer
+        if (!window.composer) {
+            alert('Composer not initialized - try refreshing the page');
+            showToast('error', 'Composer not ready');
+            return;
+        }
+        
+        console.log('Canvas OK, generating melody...');
+        alert('Generating melody...');
+        
+        const noteCount = 8 + Math.floor(Math.random() * 9);
+        const notes = [];
+        const baseY = canvas.height / 2;
+        const yRange = canvas.height * 0.6;
+        
+        // Generate notes
+        for (let i = 0; i < noteCount; i++) {
+            const x = (canvas.width / (noteCount + 1)) * (i + 1);
+            let y = baseY;
+            
+            if (i > 0) {
+                const prevY = notes[i - 1].y;
+                const maxJump = yRange * 0.25;
+                y = prevY + (Math.random() - 0.5) * maxJump;
+                y = Math.max(canvas.height * 0.15, Math.min(canvas.height * 0.85, y));
+            } else {
+                y = baseY + (Math.random() - 0.5) * yRange * 0.2;
+            }
+            
+            notes.push({ x, y });
+        }
+        
+        console.log('Generated', noteCount, 'notes');
+        
+        // Draw canvas
+        ctx.fillStyle = '#34495e';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // Grid
+        ctx.strokeStyle = '#555';
+        ctx.lineWidth = 1;
+        for (let i = 0; i <= canvas.width; i += 50) {
+            ctx.beginPath();
+            ctx.moveTo(i, 0);
+            ctx.lineTo(i, canvas.height);
+            ctx.stroke();
+        }
+        for (let i = 0; i <= canvas.height; i += 50) {
+            ctx.beginPath();
+            ctx.moveTo(0, i);
+            ctx.lineTo(canvas.width, i);
+            ctx.stroke();
+        }
+        
+        // Center line
+        ctx.strokeStyle = '#667eea';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(0, canvas.height / 2);
+        ctx.lineTo(canvas.width, canvas.height / 2);
+        ctx.stroke();
+        
+        // Draw notes - BRIGHT GREEN CIRCLES
+        ctx.fillStyle = '#00ff00';
+        ctx.strokeStyle = '#00cc00';
+        ctx.lineWidth = 3;
+        notes.forEach(note => {
+            ctx.beginPath();
+            ctx.arc(note.x, note.y, 12, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+        });
+        
+        console.log('Canvas drawn with', noteCount, 'green circles');
+        
+        // Store for playback
+        window._composerNotes = notes;
+        
+        alert(`✓ Generated ${noteCount} notes! Click Play to hear it.`);
+        showToast('success', `Generated ${noteCount}-note melody! Click Play.`);
+        
+    } catch (e) {
+        console.error('AI Generation error:', e);
+        alert('ERROR: ' + e.message);
+        showToast('error', 'Error: ' + e.message);
+    }
+};
+
 // Initialize the app
 document.addEventListener('DOMContentLoaded', async () => {
     try {
+        // Clear old caches and register new service worker
+        if ('caches' in window) {
+            caches.keys().then(names => {
+                names.forEach(name => {
+                    if (name.startsWith('ethno-') && !name.includes('v4')) {
+                        console.log('Deleting old cache:', name);
+                        caches.delete(name);
+                    }
+                });
+            });
+        }
+        
+        // Register/update service worker
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(regs => {
+                regs.forEach(reg => {
+                    console.log('Service Worker update check');
+                    reg.update();
+                });
+            });
+        }
+        
         // Global error handlers to surface issues in UI
         window.addEventListener('error', (event) => {
             console.error('Uncaught error:', event.error || event.message);
@@ -142,6 +271,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         initializeLessonPlans();
         initializeAudioUnlockOverlay();
         initializeTeacherDashboard();
+        
+        // Attach AI Generate button listener at top level
+        document.getElementById('ai-generate')?.addEventListener('click', () => {
+            console.log('AI Generate clicked');
+            window.generateAIComposition();
+        });
         if (process.env.NODE_ENV === 'production') {
             registerServiceWorker();
         }
@@ -897,6 +1032,14 @@ function initializeAnalyzer() {
                     // console.log('AudioContext resumed successfully');
                 } catch (resumeErr) {
                     console.error('AudioContext resume failed or timed out:', resumeErr);
+                    // Safari fallback: try one more time
+                    if (audioAnalyzer.browserOptimizations.isSafari) {
+                        try {
+                            await audioAnalyzer.audioContext.resume();
+                        } catch (e2) {
+                            console.error('Safari resume retry failed:', e2);
+                        }
+                    }
                     // Continue anyway - try to decode even if resume failed
                 }
             }
@@ -2272,25 +2415,28 @@ function initializeRecorder() {
             mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
             showToast('success', 'Microphone access granted');
             
-            // Safari works best with WAV format for MediaRecorder output
-            let mimeType = 'audio/wav';
+            // Safari and cross-browser format compatibility
+            let mimeType = 'audio/webm'; // Default
             const options = {};
             
-            // Try to use supported format
+            // Check browser-specific formats (Safari prioritizes MP4)
             if (MediaRecorder.isTypeSupported('audio/mp4')) {
                 mimeType = 'audio/mp4';
                 options.mimeType = mimeType;
-            } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+            } else if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
                 mimeType = 'audio/webm;codecs=opus';
                 options.mimeType = mimeType;
-            } else if (MediaRecorder.isTypeSupported('audio/ogg')) {
-                mimeType = 'audio/ogg';
+            } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+                mimeType = 'audio/webm';
+                options.mimeType = mimeType;
+            } else if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) {
+                mimeType = 'audio/ogg;codecs=opus';
                 options.mimeType = mimeType;
             }
-            // If none of above, don't specify mimeType and use browser default
+            // If none work, use browser default (don't specify mimeType)
             
             recordingMimeType = mimeType;
-            console.log('Recording format:', mimeType);
+            console.log('Recording format:', mimeType, '| Browser:', navigator.userAgent.includes('Safari') ? 'Safari' : 'Other');
             mediaRecorder = new MediaRecorder(mediaStream, Object.keys(options).length > 0 ? options : undefined);
             audioChunks = [];
             
@@ -2833,8 +2979,12 @@ function initializeComposer() {
                     setStatus('Composer not initialized.');
                     return;
                 }
-                if (!notes || notes.length === 0) {
-                    setStatus('No notes yet — click the canvas to add notes.');
+                
+                // Use AI-generated notes if available, otherwise use canvas notes
+                const notesToPlay = window._composerNotes || notes;
+                
+                if (!notesToPlay || notesToPlay.length === 0) {
+                    setStatus('No notes yet — click AI Generate or click canvas to add notes.');
                     return;
                 }
 
@@ -2856,25 +3006,25 @@ function initializeComposer() {
                     }
                 }
                 
-                // console.log('Building sequence with', notes.length, 'notes');
+                // console.log('Building sequence with', notesToPlay.length, 'notes');
                 composer.clearSequence();
-                notes.forEach(note => {
+                notesToPlay.forEach(note => {
                     const frequency = 200 + (1 - note.y / canvas.height) * 600;
                     const time = (note.x / canvas.width) * 4;
                     composer.addNote(frequency, 0.3, time);
                 });
                 
-                // console.log('Composer sequence ready, playing...');
+                console.log('Playing composition with', notesToPlay.length, 'notes');
                 // UI feedback during playback
-                setStatus(`Playing… ${notes.length} note${notes.length === 1 ? '' : 's'}`);
+                setStatus(`Playing… ${notesToPlay.length} note${notesToPlay.length === 1 ? '' : 's'}`);
                 if (playBtn) playBtn.disabled = true;
 
-                // Estimate duration to re-enable
-                const totalDuration = Math.max(0, ...notes.map(n => (n.x / canvas.width) * 4 + 0.3));
+                // Estimate duration to re-enable - use notesToPlay not notes
+                const totalDuration = Math.max(0, ...notesToPlay.map(n => (n.x / canvas.width) * 4 + 0.3));
                 await composer.playSequence();
-                // console.log('Play sequence complete');
+                console.log('Play sequence complete');
                 reenableTimer = setTimeout(() => {
-                    setStatus(`Done. Notes: ${notes.length}`);
+                    setStatus(`Done. Notes: ${notesToPlay.length}`);
                     if (playBtn) playBtn.disabled = false;
                 }, Math.ceil(totalDuration * 1000) + 50);
                 progressTracker.addAchievement('composed_music');
@@ -2905,6 +3055,41 @@ function initializeComposer() {
             drawGrid();
             setStatus('Cleared. Click the canvas to add notes.');
         });
+        
+        // Export MIDI button
+        document.getElementById('export-midi')?.addEventListener('click', () => {
+            try {
+                if (!composer || notes.length === 0) {
+                    setStatus('No composition to export.');
+                    showToast('warning', 'Create a composition first');
+                    return;
+                }
+                
+                // Build sequence for export
+                composer.clearSequence();
+                notes.forEach(note => {
+                    const frequency = 200 + (1 - note.y / canvas.height) * 600;
+                    const time = (note.x / canvas.width) * 4;
+                    composer.addNote(frequency, 0.3, time);
+                });
+                
+                const midiData = composer.exportToMIDI();
+                const blob = new Blob([midiData], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `composition-${Date.now()}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+                
+                setStatus('MIDI exported successfully!');
+                showToast('success', 'Composition exported as JSON');
+            } catch (err) {
+                console.error('Export failed:', err);
+                setStatus('Export failed.');
+                showToast('error', 'Export failed: ' + err.message);
+            }
+        });
     }
     
     // Loop controls
@@ -2924,6 +3109,7 @@ function initializeComposer() {
         document.getElementById('loop-display').innerHTML = '<p>Loops cleared</p>';
     });
 }
+
 
 // Play mixed scale demonstration - GLOBAL FUNCTION
 window.playMixedScale = function(culture1Id, culture2Id) {

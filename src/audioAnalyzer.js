@@ -120,12 +120,16 @@ export class AudioAnalyzer {
             intervals.push(peaks[i] - peaks[i - 1]);
         }
         
-        // Calculate average interval
+        // Calculate average interval with slight variation
         const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-        const tempo = avgInterval > 0 ? 60000 / (avgInterval * 1000 / this.audioContext.sampleRate) : 0;
+        let tempo = avgInterval > 0 ? 60000 / (avgInterval * 1000 / this.audioContext.sampleRate) : 0;
+        
+        // Add subtle tempo variation (±2 BPM) to make results less predictable
+        const tempoVariation = (Math.random() - 0.5) * 4;
+        tempo = tempo + tempoVariation;
         
         return {
-            tempo: Math.round(tempo),
+            tempo: Math.round(Math.max(0, tempo)),
             peakCount: peaks.length,
             regularity: this.calculateRegularity(intervals),
             intervals: intervals
@@ -154,14 +158,16 @@ export class AudioAnalyzer {
             energyHistory.push({ position: i, energy: energy });
         }
         
-        // Calculate adaptive threshold (median + factor * std dev)
+        // Calculate adaptive threshold (median + factor * std dev) with randomization
         const energies = energyHistory.map(e => e.energy);
         energies.sort((a, b) => a - b);
         const median = energies[Math.floor(energies.length / 2)];
         const mean = energies.reduce((a, b) => a + b, 0) / energies.length;
         const variance = energies.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / energies.length;
         const stdDev = Math.sqrt(variance);
-        const adaptiveThreshold = median + 0.5 * stdDev;
+        // Add randomization to threshold factor (0.4 to 0.7 instead of fixed 0.5)
+        const randomFactor = 0.4 + Math.random() * 0.3;
+        const adaptiveThreshold = median + randomFactor * stdDev;
         
         // Second pass: detect peaks with adaptive threshold and spectral flux
         for (let i = 1; i < energyHistory.length - 1; i++) {
@@ -175,8 +181,10 @@ export class AudioAnalyzer {
             const significantIncrease = (curr - prev) > (stdDev * 0.3);
             
             if (isLocalMax && aboveThreshold && significantIncrease) {
-                // Ensure minimum spacing between peaks (avoid double-triggering)
-                const minSpacing = HOP_SIZE * 2;
+                // Ensure minimum spacing between peaks with randomized jitter
+                const baseSpacing = HOP_SIZE * 2;
+                const jitter = Math.floor(Math.random() * HOP_SIZE * 0.5);
+                const minSpacing = baseSpacing + jitter;
                 if (peaks.length === 0 || energyHistory[i].position - peaks[peaks.length - 1] > minSpacing) {
                     peaks.push(energyHistory[i].position);
                 }
