@@ -253,7 +253,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Initialize accessibility controls
         initializeAccessibility();
         
-        composer = new MusicComposer(audioContext);
+        window.composer = new MusicComposer(audioContext);
         pitchGame = new PitchMatchingGame(audioContext);
         
         initializeTabs();
