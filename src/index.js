@@ -643,7 +643,8 @@ function initializeWorldMap(cultures) {
         'caribbean-steel-pan': { lat: 11, lng: -61, color: '#E76F51', region: 'Caribbean' },
         'korean-traditional': { lat: 37, lng: 127, color: '#FF6B6B', region: 'East Asia' },
         'venezuelan-joropo': { lat: 8, lng: -66, color: '#90A955', region: 'Venezuela' },
-        'caribbean-rhythms': { lat: 18, lng: -75, color: '#F28482', region: 'Caribbean Islands' }
+        'caribbean-rhythms': { lat: 18, lng: -75, color: '#F28482', region: 'Caribbean Islands' },
+        'guyana': { lat: 5, lng: -59, color: '#E76F51', region: 'Caribbean' }
     };
     
     // Build legend by unique regions
@@ -786,14 +787,17 @@ function filterCulturesByRegion(region) {
         'North America': 'North America',
         'Caribbean': 'Caribbean',
         'Venezuela': 'Venezuela',
-        'Caribbean Islands': 'Caribbean Islands'
+        'Caribbean Islands': 'Caribbean Islands',
+        'South America/Caribbean': 'Caribbean'
     };
     
     cultureCards.forEach(card => {
         const cardRegion = card.querySelector('p').textContent;
         const mappedRegion = regionMap[cardRegion] || cardRegion;
         
-        if (!region || mappedRegion === region || cardRegion === region) {
+        const normalizedMapped = (mappedRegion || '').toLowerCase();
+        const targetRegion = (region || '').toLowerCase();
+        if (!region || normalizedMapped === targetRegion || cardRegion === region || normalizedMapped.includes(targetRegion)) {
             card.style.display = 'block';
             card.style.opacity = '1';
             visibleCount++;

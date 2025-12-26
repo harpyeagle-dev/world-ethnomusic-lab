@@ -361,6 +361,27 @@ export const expandedCulturesData = [
         ],
         audioSample: '/samples/caribbean-rhythms.mp3',
         videoTutorial: 'https://example.com/caribbean-tutorial'
+    },
+    {
+        id: 'guyana',
+        name: 'Guyanese',
+        emoji: '🇬🇾',
+        region: 'South America/Caribbean',
+        description: 'Vibrant multicultural fusion blending Indo-Caribbean chutney, Afro-Guyanese rhythms, and Indigenous traditions featuring tassa drums, steel pan, and calypso influences.',
+        characteristics: {
+            rhythm: 'Syncopated chutney patterns, tassa drumming cycles, calypso beats',
+            scales: 'Major/minor with Indian modal influences and Caribbean melodic patterns',
+            instruments: 'Tassa drums, dholak, djembe, sambura, steel pan, dhantal, harmonium, cuatro',
+            tempo: '120-180 BPM for chutney, variable for traditional styles'
+        },
+        genres: ['Chutney', 'Chutney Soca', 'Calypso', 'Reggae', 'Soca', 'Indigenous traditional (Parishara, Mari-Mari, Mari, Banchikilli)', 'Guyanese Folk', 'Shanto', 'Lopee', 'CaliMari', 'Afai'],
+        facts: [
+            'Chutney music blends Indian film music with Caribbean soca rhythms',
+            'Tassa drumming, brought by Indian indentured laborers, is integral to Hindu and Muslim celebrations',
+            'Mashramani music celebrates Guyana\'s Republic Day with elaborate street festivals'
+        ],
+        audioSample: '/samples/guyana.mp3',
+        videoTutorial: 'https://example.com/guyana-tutorial'
     }
 ];
 
