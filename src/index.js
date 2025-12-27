@@ -2818,11 +2818,30 @@ async function analyzeRecording(audioBlob) {
         
         const topMatches = matches.slice(0, 3);
         
+        // Extract genres from top match if available
+        let detectedGenres = [];
+        if (topMatches.length > 0 && topMatches[0].culture.genres && Array.isArray(topMatches[0].culture.genres)) {
+            detectedGenres = topMatches[0].culture.genres;
+        }
+        
         let comparisonHTML = '';
         if (topMatches.length > 0) {
+            let genreHTML = '';
+            if (detectedGenres.length > 0) {
+                genreHTML = `
+                    <div style="margin: 15px 0; padding: 12px; background: #fff9c4; border-radius: 6px; border-left: 4px solid #f9a825;">
+                        <h5 style="margin: 0 0 8px; color: #f57f17;">🎵 Detected Genres</h5>
+                        <p style="margin: 0; font-size: 0.9em; color: #333;">
+                            ${detectedGenres.join(', ')}
+                        </p>
+                    </div>
+                `;
+            }
+            
             comparisonHTML = `
                 <div style="margin-top: 20px; padding: 15px; background: #e8f5e9; border-radius: 8px; border-left: 4px solid #4caf50;">
                     <h4 style="margin-top: 0; color: #2e7d32;">🌍 Similar Musical Cultures</h4>
+                    ${genreHTML}
                     <p style="margin: 0 0 15px; font-size: 0.9em;">
                         Based on your recording's tempo, rhythm, and characteristics, here are similar cultures:
                     </p>
