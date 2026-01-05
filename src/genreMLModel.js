@@ -78,6 +78,8 @@ class GenreMLClassifier {
             }
 
             // Attempt to load ONNX model via onnxruntime-web (wasm)
+            // DISABLED: ONNX inference is failing on GitHub Pages, fall back to TF.js
+            /*
             try {
                 // Serve ORT wasm assets from /ort copied by webpack (force trailing slash to avoid path concat issues)
                 const ortBase = this.resolveAssetPath('ort/');
@@ -98,6 +100,7 @@ class GenreMLClassifier {
                 this.ortSession = null;
                 this.ortReady = false;
             }
+            */
             
             // For now, we'll use a simplified approach with the existing infrastructure
             // In production, you would download the actual model files from:
