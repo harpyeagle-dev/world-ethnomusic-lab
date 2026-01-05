@@ -1,7 +1,7 @@
 {
-  "name": "ethnomusicology-explorer",
+  "name": "world-ethnomusic-lab",
   "version": "1.0.0",
-  "description": "An interactive computational ethnomusicology app for all ages to explore, analyze, and learn about music from cultures around the world",
+  "description": "An interactive world music exploration and analysis app for all ages to explore, analyze, and learn about music from cultures around the world",
   "main": "src/index.js",
   "scripts": {
     "start": "webpack serve --mode development --open",

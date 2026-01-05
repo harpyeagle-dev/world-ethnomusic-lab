@@ -7,7 +7,8 @@ module.exports = {
   output: {
     path: path.resolve(__dirname, 'dist'),
     filename: 'bundle.[contenthash].js',
-    publicPath: '/world-ethnomusic-lab/',
+    // Use automatic publicPath so assets resolve correctly in GitHub Pages subpaths
+    publicPath: 'auto',
     clean: true,
   },
   resolve: {
@@ -38,7 +39,7 @@ module.exports = {
   plugins: [
     new HtmlWebpackPlugin({
       template: './src/index.html',
-      title: 'Ethnomusicology Explorer'
+      title: 'World EthnoMusic Lab'
     }),
     new CopyWebpackPlugin({
       patterns: [

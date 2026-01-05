@@ -336,8 +336,13 @@ function initializeTabs() {
 function registerServiceWorker() {
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
+            const base = (typeof __webpack_public_path__ !== 'undefined' && __webpack_public_path__)
+                ? __webpack_public_path__
+                : '/';
+            const normalizedBase = base.endsWith('/') ? base : `${base}/`;
+            const swUrl = new URL('sw.js', window.location.origin + normalizedBase).toString();
             navigator.serviceWorker
-                .register('sw.js')
+                .register(swUrl, { scope: normalizedBase })
                 .then(reg => console.log('Service worker registered', reg.scope))
                 .catch(err => console.warn('Service worker registration failed', err));
         });

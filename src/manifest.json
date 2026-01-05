@@ -1,8 +1,8 @@
 {
-  "name": "Ethnomusicology Explorer",
-  "short_name": "EthnoExplorer",
-  "start_url": "/world-ethnomusic-lab/",
-  "scope": "/world-ethnomusic-lab/",
+  "name": "World EthnoMusic Lab",
+  "short_name": "EthnoMusic Lab",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#1a1a2e",
   "theme_color": "#667eea",

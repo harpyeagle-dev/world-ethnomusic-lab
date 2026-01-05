@@ -20,6 +20,18 @@ class GenreMLClassifier {
     }
 
     /**
+     * Resolve an asset path that works in both local dev (root) and GitHub Pages subpath (/world-ethnomusic-lab/).
+     */
+    resolveAssetPath(relativePath) {
+        const base = (typeof __webpack_public_path__ !== 'undefined' && __webpack_public_path__)
+            ? __webpack_public_path__
+            : '/';
+        const normalizedBase = base.endsWith('/') ? base : `${base}/`;
+        const trimmed = relativePath.replace(/^\/+/, '');
+        return `${normalizedBase}${trimmed}`;
+    }
+
+    /**
      * Load the pre-trained genre classification model
      */
     async loadModel() {
@@ -27,13 +39,13 @@ class GenreMLClassifier {
             console.log('Loading Essentia genre classification model...');
 
             // Attempt to load TF.js graph model if present in /models
-            // Expected path: /models/genre_discogs400/model.json
+            // Expected path: /models/genre_discogs400/model.json (handled via webpack publicPath)
             // Place downloaded Essentia TFJS bundle in public/models/genre_discogs400
             try {
-                const tfModelUrl = '/models/genre_discogs400/model.json';
+                const tfModelUrl = this.resolveAssetPath('models/genre_discogs400/model.json');
                 this.tfModel = await tf.loadGraphModel(tfModelUrl);
                 this.inputSpec = this.getInputSpec();
-                await this.loadMetadata('/models/genre_discogs400/metadata.json');
+                await this.loadMetadata(this.resolveAssetPath('models/genre_discogs400/metadata.json'));
                 console.log('TF.js genre model loaded from', tfModelUrl, 'with input', this.inputSpec.shape);
             } catch (tfErr) {
                 console.warn('TF.js genre model not found or failed to load; using heuristic classifier:', tfErr?.message || tfErr);
@@ -42,16 +54,17 @@ class GenreMLClassifier {
 
             // Attempt to load ONNX model via onnxruntime-web (wasm)
             try {
-                // Serve ORT wasm assets from /ort copied by webpack
-                ort.env.wasm.wasmPaths = '/ort';
-                const ortModelUrl = '/models/genre_discogs400/genre_discogs400-discogs-maest-30s-pw-1.onnx';
+                // Serve ORT wasm assets from /ort copied by webpack (force trailing slash to avoid path concat issues)
+                const ortBase = this.resolveAssetPath('ort/');
+                ort.env.wasm.wasmPaths = ortBase;
+                const ortModelUrl = this.resolveAssetPath('models/genre_discogs400/genre_discogs400-discogs-maest-30s-pw-1.onnx');
                 this.ortSession = await ort.InferenceSession.create(ortModelUrl, {
                     executionProviders: ['wasm'],
                     graphOptimizationLevel: 'all'
                 });
                 this.ortReady = true;
                 this.ortInput = this.getOrtInputSpec();
-                await this.loadMetadata('/models/genre_discogs400/metadata.json');
+                await this.loadMetadata(this.resolveAssetPath('models/genre_discogs400/metadata.json'));
                 console.log('ONNX genre model loaded from', ortModelUrl, 'with input', this.ortInput.shape);
             } catch (ortErr) {
                 console.warn('ONNX genre model not found or failed to load; will fall back to TF/heuristics:', ortErr?.message || ortErr);
