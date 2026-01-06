@@ -4,10 +4,17 @@
  */
 
 import MLTrainer from './mlTrainer.js';
-import { AudioAnalyzer } from './audioAnalyzer.js';
 
 let mlInitialized = false;
-let audioAnalyzer = null;
+let sharedAudioAnalyzer = null;
+
+/**
+ * Set the shared AudioAnalyzer instance from the main app
+ */
+export function setAudioAnalyzer(analyzer) {
+  sharedAudioAnalyzer = analyzer;
+  console.log('[Trainer] AudioAnalyzer set for feature extraction');
+}
 
 /**
  * Initialize ML trainer UI
@@ -19,11 +26,6 @@ export async function initMLTrainerUI() {
   // Initialize ML system
   const success = await MLTrainer.init();
   mlInitialized = success;
-
-  // Initialize AudioAnalyzer for feature extraction
-  audioAnalyzer = new AudioAnalyzer();
-  await audioAnalyzer.initialize();
-  console.log('AudioAnalyzer initialized for ML training');
 
   // Create UI
   const html = `
@@ -208,17 +210,17 @@ async function addTrainingSample() {
     const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
     // Extract real features using AudioAnalyzer
-    if (!audioAnalyzer) {
-      throw new Error('AudioAnalyzer not initialized');
+    if (!sharedAudioAnalyzer) {
+      throw new Error('AudioAnalyzer not initialized. Please analyze a sample in the main app first.');
     }
 
     statusEl.textContent = '⏳ Extracting features...';
     
     // Analyze the audio buffer to extract features
-    const essentiaFeatures = audioAnalyzer.extractEssentiaFeatures(audioBuffer);
-    const rhythmAnalysis = await audioAnalyzer.analyzeRhythm(audioBuffer);
-    const scaleAnalysis = await audioAnalyzer.detectScale(audioBuffer);
-    const spectralAnalysis = await audioAnalyzer.analyzeSpectralProperties(audioBuffer);
+    const essentiaFeatures = sharedAudioAnalyzer.extractEssentiaFeatures(audioBuffer);
+    const rhythmAnalysis = await sharedAudioAnalyzer.analyzeRhythm(audioBuffer);
+    const scaleAnalysis = await sharedAudioAnalyzer.detectScale(audioBuffer);
+    const spectralAnalysis = await sharedAudioAnalyzer.analyzeSpectralProperties(audioBuffer);
 
     // Use MLTrainer's feature extraction
     const features = MLTrainer.extractMLFeatures(

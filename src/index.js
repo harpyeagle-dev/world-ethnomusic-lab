@@ -10,7 +10,7 @@ import { dedupeCultures } from './utils/dedup.js';
 import { RealTimePitchDetector, Visualizer3D, ProgressTracker, musicalGlossary } from './advancedFeatures.js';
 import { MusicComposer, Looper, PitchMatchingGame, RhythmDictation, InstrumentIdentifier, downloadJSON, generatePDF } from './games.js';
 import { culturalQuizQuestions, getRandomQuestions, lessonPlans, practiceExercises, accessibilityHelpers, mobileOptimizations } from './extendedFeatures.js';
-import { initMLTrainerUI } from './trainerUI.js';
+import { initMLTrainerUI, setAudioAnalyzer } from './trainerUI.js';
 
 // Global state
 let audioAnalyzer;
@@ -321,6 +321,10 @@ function initializeTabs() {
         // Initialize ML Trainer UI when trainer tab is opened
         if (tabName === 'trainer') {
             initMLTrainerUI().catch(err => console.error('Failed to initialize ML Trainer:', err));
+            // Pass the global audioAnalyzer to the trainer
+            if (audioAnalyzer) {
+                setAudioAnalyzer(audioAnalyzer);
+            }
         }
 
         // Ensure Leaflet map resizes correctly when Explore tab becomes visible
