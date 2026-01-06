@@ -1064,15 +1064,24 @@ export class AudioAnalyzer {
             genres['Indian Classical'] -= 0.15;
         } else if (regularity < 0.1) {
             // Very low regularity - folk/world/acoustic often have natural variations
-            genres['Folk'] += 0.6;
-            genres['World'] += 0.6;
-            genres['Indian Classical'] += 0.4;
-            genres['Jazz'] += 0.4;
-            // Penalize mechanical genres heavily
-            genres['Electronic'] -= 0.5;
-            genres['Pop'] -= 0.4;
-            genres['Hip Hop'] -= 0.4;
-            genres['Reggae'] -= 0.3;
+            // BUT: Check for reggae signature first (moderate tempo + low regularity + some percussion)
+            if (tempo >= 80 && tempo < 130 && percussiveness >= 0.02 && percussiveness <= 0.10) {
+                // This could be reggae - don't penalize it
+                genres['Reggae'] += 0.8;
+                genres['Folk'] += 0.3;
+                genres['World'] += 0.3;
+            } else {
+                // Not reggae - boost world/folk as before
+                genres['Folk'] += 0.6;
+                genres['World'] += 0.6;
+                genres['Indian Classical'] += 0.4;
+                genres['Jazz'] += 0.4;
+                // Penalize mechanical genres heavily
+                genres['Electronic'] -= 0.5;
+                genres['Pop'] -= 0.4;
+                genres['Hip Hop'] -= 0.4;
+                genres['Reggae'] -= 0.3;
+            }
         } else if (regularity < 0.5) {
             genres['World'] += 0.5;
             genres['Folk'] += 0.4;
@@ -1080,6 +1089,7 @@ export class AudioAnalyzer {
             genres['European Classical'] += 0.25;
             genres['Indian Classical'] += 0.2;
             genres['Latin'] += 0.3;
+            genres['Reggae'] += 0.2;  // Small reggae boost in this range too
             // Penalize very regular genres
             genres['Electronic'] -= 0.3;
             genres['Hip Hop'] -= 0.2;
