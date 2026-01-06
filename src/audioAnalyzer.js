@@ -1297,14 +1297,36 @@ export class AudioAnalyzer {
             genres['Pop'] -= 0.3;
         }
 
-        // Tie-breaker: Reggae vs Folk (moderate tempo, very low regularity, light percussion)
-        // Always-on to ensure reggae locks in correctly
+        // Tie-breaker: Reggae vs Indigenous (distinguish early)
+        // Indigenous music characteristics: polyrhythmic + pentatonic + complex rhythms + moderate/higher complexity
+        // Reggae characteristics: moderate tempo (80-120) + light percussion + lower complexity
+        
+        // EARLY Indigenous detection - runs BEFORE reggae to establish a baseline
+        // Indigenous music: polyrhythmic + pentatonic + either high complexity OR high spectral centroid diversity
+        const isIndigenousPattern = polyrhythmic && 
+                                    scale.includes('Pentatonic') && 
+                                    (complexity > 0.65 || spectralCentroid > 10000) &&
+                                    regularity < 0.12;
+        
         // Reggae check FIRST - must be evaluated before indigenousStrong
-        const reggaeConditionMet = (tempo >= 80 && tempo < 120 && regularity < 0.12 && percussiveness >= 0.02 && percussiveness <= 0.08 && complexity < 0.74);
+        // Reggae is more specific: moderate tempo + light percussion + moderate complexity
+        const reggaeConditionMet = (tempo >= 80 && tempo < 120 && 
+                                    regularity < 0.12 && 
+                                    percussiveness >= 0.02 && percussiveness <= 0.08 && 
+                                    complexity < 0.74 && 
+                                    !isIndigenousPattern); // Exclude indigenous from reggae
         
         // Indigenous detector to avoid misclassifying polyrhythmic pentatonic material as reggae
         // BUT: exclude actual reggae from this guard
         const indigenousStrong = (!reggaeConditionMet) && polyrhythmic && scale.includes('Pentatonic') && regularity < 0.08 && spectralCentroid > 8000 && complexity >= 0.65;
+        
+        // EARLY INDIGENOUS BOOST - run before reggae boost so indigenous is established
+        if (isIndigenousPattern) {
+            genres['World'] += 0.8;
+            genres['Folk'] += 0.5;
+            genres['Reggae'] -= 0.5; // Penalize reggae early for indigenous patterns
+            console.log('🌍 Indigenous pattern detected');
+        }
         
         if (indigenousStrong) {
             genres['World'] += 1.6;
@@ -1315,10 +1337,10 @@ export class AudioAnalyzer {
         }
         
         if (reggaeConditionMet) {
-            genres['Reggae'] += 1.2;  // Significantly increased to override world/folk
-            genres['Folk'] -= 1.0;
-            genres['Country'] -= 0.6;
-            genres['World'] -= 1.5;   // Strong penalty to world
+            genres['Reggae'] += 1.5;  // Increased from 1.2
+            genres['Folk'] -= 1.2;    // Increased from -1.0
+            genres['Country'] -= 0.8; // Increased from -0.6
+            genres['World'] -= 2.0;   // Increased from -1.5 for stronger reggae lock-in
         }
 
         // Country penalty for very low-regularity, lightly percussive, polyrhythmic material
@@ -1340,7 +1362,8 @@ export class AudioAnalyzer {
 
         // Indigenous guard: if World has been strongly boosted, further penalize Reggae/Classical types/Jazz
         // This prevents these genres from appearing in top rankings for indigenous content
-        if (genres['World'] > 2.5) {
+        // BUT: Skip this entirely if reggae was detected - reggae should stay strong
+        if (!reggaeConditionMet && genres['World'] > 2.5) {
             genres['Reggae'] -= 1.2;  // Increased from -0.8
             genres['European Classical'] -= 0.6;
             genres['Indian Classical'] -= 0.6;
