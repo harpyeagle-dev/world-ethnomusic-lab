@@ -1545,16 +1545,20 @@ export class AudioAnalyzer {
                         console.log(`  ${i + 1}. ${p.genre}: ${(p.confidence * 100).toFixed(1)}%`);
                     });
 
-                    // If not overriding, blend ML with heuristics (legacy behavior)
+                    // If not overriding, only blend when a trained model produced the predictions
                     if (!mlOverride) {
-                        const mlBlendWeight = 0.4; // 40% ML, 60% heuristic
-                        mlGenrePrediction.predictions.forEach(pred => {
-                            if (genres.hasOwnProperty(pred.genre)) {
-                                const mlBoost = pred.confidence * 10 * mlBlendWeight; // Scale up to match score range
-                                genres[pred.genre] += mlBoost;
-                                console.log(`ML Boost: ${pred.genre} +${mlBoost.toFixed(3)}`);
-                            }
-                        });
+                        if (mlGenrePrediction.modelTrained === true) {
+                            const mlBlendWeight = 0.4; // 40% ML, 60% heuristic
+                            mlGenrePrediction.predictions.forEach(pred => {
+                                if (genres.hasOwnProperty(pred.genre)) {
+                                    const mlBoost = pred.confidence * 10 * mlBlendWeight; // Scale up to match score range
+                                    genres[pred.genre] += mlBoost;
+                                    console.log(`ML Boost: ${pred.genre} +${mlBoost.toFixed(3)}`);
+                                }
+                            });
+                        } else {
+                            console.log('[ML Blend] Skipping blend: fallback predictor is not trained');
+                        }
                     } else {
                         console.log('[ML Override] Using trained ML predictions; skipping heuristic blending.');
                     }

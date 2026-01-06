@@ -233,8 +233,21 @@ async function addTrainingSample() {
       brightness: Math.max(0, Math.min(1, essentiaFeatures?.centroid ?? 0.5)),
       flux: essentiaFeatures?.spectralFlux || 0
     };
-    // Scale not available here without pitch tracking; mark as Unknown (MLTrainer handles this)
-    const scaleAnalysis = { scale: 'Unknown', confidence: 0 };
+    // Optional: attempt external scale detection via global Yie.detectScale if present
+    let extScale = 'Unknown';
+    try {
+      const Y = (typeof window !== 'undefined' && window.Yie) ? window.Yie : (typeof Yie !== 'undefined' ? Yie : null);
+      if (Y && typeof Y.detectScale === 'function') {
+        const input = { audio: trimmed, sampleRate };
+        extScale = Y.detectScale(input) || 'Unknown';
+      } else {
+        console.warn('[Scale] detectScale unavailable; skipping scale detection.');
+      }
+    } catch (e) {
+      console.warn('[Scale] detectScale failed; skipping.', e);
+      extScale = 'Unknown';
+    }
+    const scaleAnalysis = { scale: extScale, confidence: 0 };
 
     // Use MLTrainer's feature extraction
     const features = MLTrainer.extractMLFeatures(
