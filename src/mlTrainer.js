@@ -20,7 +20,9 @@ const MLTrainer = {
     try {
       // Try to load saved model from IndexedDB
       await this.loadModelFromStorage();
-      console.log('[ML] Initialized. Model loaded:', !!this.model);
+      // Try to load saved training data
+      await this.loadTrainingDataFromStorage();
+      console.log('[ML] Initialized. Model loaded:', !!this.model, 'Samples:', this.trainingData.length);
       return true;
     } catch (err) {
       console.warn('[ML] Failed to initialize:', err);
@@ -186,6 +188,11 @@ const MLTrainer = {
     });
 
     console.log(`[ML] Added training sample: ${ragaLabel} (total: ${this.trainingData.length})`);
+    
+    // Auto-save training data to IndexedDB
+    this.saveTrainingDataToStorage().catch(err => 
+      console.warn('[ML] Failed to auto-save training data:', err)
+    );
   },
 
   /**
@@ -359,10 +366,91 @@ const MLTrainer = {
       this.model = null;
       this.trainingData = [];
       this.ragaLabels.clear();
-      console.log('[ML] Model deleted');
+      // Also delete training data
+      await this.deleteTrainingDataFromStorage();
+      console.log('[ML] Model and training data deleted');
     } catch (err) {
       console.warn('[ML] Failed to delete model:', err);
     }
+  },
+
+  /**
+   * Save training data to IndexedDB
+   */
+  async saveTrainingDataToStorage() {
+    try {
+      const db = await this.openDB();
+      const tx = db.transaction(['trainingData'], 'readwrite');
+      const store = tx.objectStore('trainingData');
+      
+      const data = {
+        id: 'main',
+        samples: this.trainingData,
+        ragaLabels: Array.from(this.ragaLabels.entries()),
+        savedAt: new Date().toISOString()
+      };
+      
+      await store.put(data);
+      console.log('[ML] Training data saved to IndexedDB');
+    } catch (err) {
+      console.warn('[ML] Failed to save training data:', err);
+    }
+  },
+
+  /**
+   * Load training data from IndexedDB
+   */
+  async loadTrainingDataFromStorage() {
+    try {
+      const db = await this.openDB();
+      const tx = db.transaction(['trainingData'], 'readonly');
+      const store = tx.objectStore('trainingData');
+      const data = await store.get('main');
+      
+      if (data) {
+        this.trainingData = data.samples || [];
+        this.ragaLabels = new Map(data.ragaLabels || []);
+        console.log(`[ML] Loaded ${this.trainingData.length} training samples from IndexedDB`);
+        return true;
+      }
+    } catch (err) {
+      console.warn('[ML] No saved training data found:', err);
+    }
+    return false;
+  },
+
+  /**
+   * Delete training data from IndexedDB
+   */
+  async deleteTrainingDataFromStorage() {
+    try {
+      const db = await this.openDB();
+      const tx = db.transaction(['trainingData'], 'readwrite');
+      const store = tx.objectStore('trainingData');
+      await store.delete('main');
+      console.log('[ML] Training data deleted from IndexedDB');
+    } catch (err) {
+      console.warn('[ML] Failed to delete training data:', err);
+    }
+  },
+
+  /**
+   * Open IndexedDB database
+   */
+  async openDB() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open('ethno-ml-trainer', 1);
+      
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result);
+      
+      request.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains('trainingData')) {
+          db.createObjectStore('trainingData', { keyPath: 'id' });
+        }
+      };
+    });
   },
 
   /**
@@ -379,10 +467,12 @@ const MLTrainer = {
   /**
    * Import training data from JSON
    */
-  importTrainingData(data) {
+  async importTrainingData(data) {
     this.trainingData = data.samples || [];
     this.ragaLabels = new Map(data.ragaLabels || []);
     console.log(`[ML] Imported ${this.trainingData.length} samples`);
+    // Auto-save imported data
+    await this.saveTrainingDataToStorage();
   },
 
   /**
