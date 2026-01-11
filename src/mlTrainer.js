@@ -175,7 +175,7 @@ const MLTrainer = {
   /**
    * Add labeled training sample
    */
-  addTrainingSample(features, ragaLabel) {
+  async addTrainingSample(features, ragaLabel) {
     // Ensure label exists in map
     if (!this.ragaLabels.has(ragaLabel)) {
       this.ragaLabels.set(ragaLabel, this.ragaLabels.size);
@@ -190,9 +190,11 @@ const MLTrainer = {
     console.log(`[ML] Added training sample: ${ragaLabel} (total: ${this.trainingData.length})`);
     
     // Auto-save training data to IndexedDB
-    this.saveTrainingDataToStorage().catch(err => 
-      console.warn('[ML] Failed to auto-save training data:', err)
-    );
+    try {
+      await this.saveTrainingDataToStorage();
+    } catch (err) {
+      console.warn('[ML] Failed to auto-save training data:', err);
+    }
   },
 
   /**
@@ -390,7 +392,11 @@ const MLTrainer = {
         savedAt: new Date().toISOString()
       };
       
-      await store.put(data);
+      await new Promise((resolve, reject) => {
+        const request = store.put(data);
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+      });
       console.log('[ML] Training data saved to IndexedDB');
     } catch (err) {
       console.warn('[ML] Failed to save training data:', err);
@@ -405,7 +411,11 @@ const MLTrainer = {
       const db = await this.openDB();
       const tx = db.transaction(['trainingData'], 'readonly');
       const store = tx.objectStore('trainingData');
-      const data = await store.get('main');
+      const data = await new Promise((resolve, reject) => {
+        const request = store.get('main');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
       
       if (data) {
         this.trainingData = data.samples || [];
@@ -427,7 +437,11 @@ const MLTrainer = {
       const db = await this.openDB();
       const tx = db.transaction(['trainingData'], 'readwrite');
       const store = tx.objectStore('trainingData');
-      await store.delete('main');
+      await new Promise((resolve, reject) => {
+        const request = store.delete('main');
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+      });
       console.log('[ML] Training data deleted from IndexedDB');
     } catch (err) {
       console.warn('[ML] Failed to delete training data:', err);

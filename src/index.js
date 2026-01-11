@@ -1375,7 +1375,7 @@ async function analyzeAudioFile(audioBuffer, filename = 'audio-file', audioPlaye
         // Analyze rhythm
         if (analysisCancelled) throw new Error('Analysis cancelled');
         // console.log('Analyzing rhythm...');
-        const rhythmAnalysis = audioAnalyzer.analyzeRhythm(trimmedChannel);
+        const rhythmAnalysis = audioAnalyzer.analyzeRhythm(trimmedChannel, sampleRate);
         
         // Enhanced rhythm analysis with temporal features
         const temporalFeatures = audioAnalyzer.calculateTemporalFeatures(rhythmAnalysis.intervals || []);
@@ -2866,7 +2866,7 @@ async function analyzeRecording(audioBlob) {
         
         try {
             if (typeof audioAnalyzer.analyzeRhythm === 'function') {
-                rhythmAnalysis = audioAnalyzer.analyzeRhythm(channelData);
+                rhythmAnalysis = audioAnalyzer.analyzeRhythm(channelData, audioBuffer.sampleRate);
             } else {
                 console.warn('analyzeRhythm not available, using defaults');
                 rhythmAnalysis = { tempo: 0, peakCount: 0, regularity: 0, intervals: [] };

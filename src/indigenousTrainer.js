@@ -177,9 +177,9 @@ const IndigenousTrainer = {
       const trainingData = this.generateTrainingDataset();
 
       console.log('[Indigenous Trainer] Adding samples to ML trainer...');
-      trainingData.forEach(({ features, label }) => {
-        MLTrainer.addTrainingSample(features, label);
-      });
+      for (const { features, label } of trainingData) {
+        await MLTrainer.addTrainingSample(features, label);
+      }
 
       console.log('[Indigenous Trainer] Training model...');
       const result = await MLTrainer.train(

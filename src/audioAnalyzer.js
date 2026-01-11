@@ -421,9 +421,10 @@ export class AudioAnalyzer {
     /**
      * Detect rhythm patterns and tempo
      * @param {Float32Array} buffer - Audio buffer
+     * @param {number} sampleRate - Optional sample rate (defaults to audioContext.sampleRate)
      * @returns {Object} Rhythm analysis results
      */
-    analyzeRhythm(buffer) {
+    analyzeRhythm(buffer, sampleRate = null) {
         // Basic rhythm analysis
         const peaks = this.detectOnsets(buffer);
         const intervals = [];
@@ -432,9 +433,11 @@ export class AudioAnalyzer {
             intervals.push(peaks[i] - peaks[i - 1]);
         }
         
+        // Use provided sampleRate or fall back to audioContext
+        const sr = sampleRate || (this.audioContext ? this.audioContext.sampleRate : 44100);
         // Calculate average interval deterministically (remove prior random variation)
         const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-        const tempo = avgInterval > 0 ? 60000 / (avgInterval * 1000 / this.audioContext.sampleRate) : 0;
+        const tempo = avgInterval > 0 ? 60000 / (avgInterval * 1000 / sr) : 0;
         
         return {
             tempo: Math.round(Math.max(0, tempo)),

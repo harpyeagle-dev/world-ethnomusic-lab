@@ -91,6 +91,12 @@ export async function initMLTrainerUI() {
             accept=".json" 
             style="display: none;"
           >
+
+          <div class="inline-actions" style="margin-top: 8px;">
+            <button id="saveDataBtn" class="btn btn-secondary">📌 Save to IndexedDB</button>
+            <button id="loadDataBtn" class="btn btn-secondary">📥 Load from IndexedDB</button>
+          </div>
+          <div id="storageStatus" class="status-message"></div>
         </div>
 
         <div class="trainer-panel">
@@ -165,6 +171,12 @@ function bindTrainerEvents() {
   });
   document.getElementById('importFileInput').addEventListener('change', importTrainingData);
 
+  // Save/Load to IndexedDB
+  const saveBtn = document.getElementById('saveDataBtn');
+  const loadBtn = document.getElementById('loadDataBtn');
+  if (saveBtn) saveBtn.addEventListener('click', saveTrainingDataToIndexedDB);
+  if (loadBtn) loadBtn.addEventListener('click', loadTrainingDataFromIndexedDB);
+
   // Train button
   document.getElementById('trainBtn').addEventListener('click', trainModel);
 
@@ -176,6 +188,61 @@ function bindTrainerEvents() {
 
   // Update stats when sample list expands
   document.getElementById('sampleDetails').addEventListener('toggle', updateStats);
+}
+
+/**
+ * Manually save training data to IndexedDB
+ */
+async function saveTrainingDataToIndexedDB() {
+  const statusEl = document.getElementById('storageStatus');
+  try {
+    statusEl.textContent = '⏳ Saving to IndexedDB...';
+    statusEl.className = 'status-message info';
+    await MLTrainer.saveTrainingDataToStorage();
+    statusEl.textContent = '✅ Training data saved to IndexedDB';
+    statusEl.className = 'status-message success';
+    if (window.showToast) {
+      window.showToast('success', `💾 ${MLTrainer.trainingData.length} samples saved to IndexedDB`);
+    }
+  } catch (err) {
+    statusEl.textContent = `❌ Save failed: ${err.message}`;
+    statusEl.className = 'status-message error';
+    if (window.showToast) {
+      window.showToast('error', `Save failed: ${err.message}`);
+    }
+  }
+}
+
+/**
+ * Manually load training data from IndexedDB
+ */
+async function loadTrainingDataFromIndexedDB() {
+  const statusEl = document.getElementById('storageStatus');
+  try {
+    statusEl.textContent = '⏳ Loading from IndexedDB...';
+    statusEl.className = 'status-message info';
+    const ok = await MLTrainer.loadTrainingDataFromStorage();
+    if (ok) {
+      statusEl.textContent = `✅ Loaded ${MLTrainer.trainingData.length} samples`;
+      statusEl.className = 'status-message success';
+      if (window.showToast) {
+        window.showToast('success', `📥 Loaded ${MLTrainer.trainingData.length} samples from IndexedDB`);
+      }
+    } else {
+      statusEl.textContent = 'ℹ️ No saved data found';
+      statusEl.className = 'status-message info';
+      if (window.showToast) {
+        window.showToast('info', 'No saved training data found');
+      }
+    }
+    updateStats();
+  } catch (err) {
+    statusEl.textContent = `❌ Load failed: ${err.message}`;
+    statusEl.className = 'status-message error';
+    if (window.showToast) {
+      window.showToast('error', `Load failed: ${err.message}`);
+    }
+  }
 }
 
 /**
@@ -225,7 +292,7 @@ async function addTrainingSample() {
     // Extract Essentia-derived features first
     const essentiaFeatures = sharedAudioAnalyzer.extractEssentiaFeatures(audioBuffer);
     // Rhythm from PCM
-    const rhythmAnalysis = sharedAudioAnalyzer.analyzeRhythm(trimmed);
+    const rhythmAnalysis = sharedAudioAnalyzer.analyzeRhythm(trimmed, sampleRate);
     // Minimal spectral summary derived from Essentia outputs
     const spectralAnalysis = {
       centroid: (essentiaFeatures?.rawFeatures?.centroid) || ((essentiaFeatures?.centroid || 0.5) * 22050),
@@ -259,10 +326,15 @@ async function addTrainingSample() {
     );
 
     console.log('[Trainer] Extracted features:', features);
-    MLTrainer.addTrainingSample(features, label);
+    await MLTrainer.addTrainingSample(features, label);
 
     statusEl.textContent = `✅ Added sample: ${label} (${features.length} features)`;
     statusEl.className = 'status-message success';
+    
+    // Show toast notification
+    if (window.showToast) {
+      window.showToast('success', `✅ Sample added: "${label}" (${features.length} features) → Saved to IndexedDB`);
+    }
 
     // Clear inputs
     document.getElementById('ragaLabelInput').value = '';
@@ -311,9 +383,15 @@ async function trainModel() {
         Ragas: ${result.ragas}
       `;
       resultEl.className = 'status-message success';
+      if (window.showToast) {
+        window.showToast('success', `🧠 Model trained! Accuracy: ${(result.finalAccuracy * 100).toFixed(1)}%`, 4000);
+      }
     } else {
       resultEl.textContent = '❌ Training failed';
       resultEl.className = 'status-message error';
+      if (window.showToast) {
+        window.showToast('error', 'Training failed');
+      }
     }
 
     progressEl.style.display = 'none';
@@ -415,21 +493,27 @@ function exportTrainingData() {
 /**
  * Import training data from JSON
  */
-function importTrainingData(e) {
+async function importTrainingData(e) {
   const file = e.target.files[0];
   if (!file) return;
 
   const reader = new FileReader();
-  reader.onload = (event) => {
+  reader.onload = async (event) => {
     try {
       const data = JSON.parse(event.target.result);
-      MLTrainer.importTrainingData(data);
+      await MLTrainer.importTrainingData(data);
       document.getElementById('sampleStatus').textContent = `✅ Imported ${data.samples.length} samples`;
       document.getElementById('sampleStatus').className = 'status-message success';
+      if (window.showToast) {
+        window.showToast('success', `📂 Imported ${data.samples.length} samples`);
+      }
       updateStats();
     } catch (err) {
       document.getElementById('sampleStatus').textContent = `❌ Invalid JSON file`;
       document.getElementById('sampleStatus').className = 'status-message error';
+      if (window.showToast) {
+        window.showToast('error', 'Invalid JSON file');
+      }
     }
   };
   reader.readAsText(file);
