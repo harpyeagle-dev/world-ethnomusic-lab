@@ -1,3759 +1,429 @@
-import './styles.css';
-import { Chart } from 'chart.js/auto';
-import { jsPDF } from 'jspdf';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
-import { AudioAnalyzer } from './audioAnalyzer.js';
-import { getAllCultures, getCultureById, matchCulture } from './culturesData.js';
-import { getAllExpandedCultures } from './expandedCultures.js';
-import { dedupeCultures } from './utils/dedup.js';
-import { RealTimePitchDetector, Visualizer3D, ProgressTracker, musicalGlossary } from './advancedFeatures.js';
-import { MusicComposer, Looper, PitchMatchingGame, RhythmDictation, InstrumentIdentifier, downloadJSON, generatePDF } from './games.js';
-import { culturalQuizQuestions, getRandomQuestions, lessonPlans, practiceExercises, accessibilityHelpers, mobileOptimizations } from './extendedFeatures.js';
-import { initMLTrainerUI, setAudioAnalyzer } from './trainerUI.js';
+/* index.js — World EthnoMusic Lab (clean bootstrap + safe Analyze UI)
+   - Tabs + accessibility menu
+   - Dark mode (menu + FAB)
+   - Classroom mode (master gain cap)
+   - Leaflet map init hook
+   - Analyze tab: file upload → decode → analyze (NO wiping chart DOM)
+   - Record tab + Live pitch + Compose: safe initializers (expects your existing modules)
+*/
 
-// Global state
-let audioAnalyzer;
-let currentAudio = null;
+'use strict';
+
+/* =========================
+   Small DOM helpers
+========================= */
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+function on(el, ev, fn, opts) {
+  if (!el) return;
+  el.addEventListener(ev, fn, opts);
+}
+
+function show(el) { if (el) el.style.display = 'block'; }
+function hide(el) { if (el) el.style.display = 'none'; }
+function setText(el, txt) { if (el) el.textContent = txt; }
+
+function safeHTML(el, html) { if (el) el.innerHTML = html; }
+
+/* =========================
+   Toast (optional)
+========================= */
+function showToast(type, message) {
+  // If you already have a toast system, remove this.
+  console[type === 'error' ? 'error' : 'log']('[Toast]', type, message);
+}
+
+/* =========================
+   Global Audio (optional master gain)
+========================= */
 let audioContext = null;
-let mediaRecorder = null;
-let audioChunks = [];
-let currentCulture = null;
-let pitchDetector = null;
-let visualizer = null;
-let progressTracker = null;
-let composer = null;
-let looper = null;
-let pitchGame = null;
-let isDarkMode = false;
-let analysisCancelled = false;
-let worldMapInstance = null; // Cache Leaflet map to fix size when tab toggles
-
-// Lightweight toast notifications (non-blocking replacement for alert())
-function showToast(type, message, duration = 3000) {
+function ensureAudioContext() {
+  if (!audioContext) {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (!window.__MASTER_GAIN) {
     try {
-        let container = document.getElementById('toast-container');
-        if (!container) {
-            container = document.createElement('div');
-            container.id = 'toast-container';
-            container.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:3000;display:flex;flex-direction:column;gap:10px;';
-            document.body.appendChild(container);
-        }
-        const colors = {
-            success: '#4caf50',
-            error: '#f44336',
-            warning: '#ff9800',
-            info: '#2196f3'
-        };
-        const icons = {
-            success: '✅',
-            error: '❌',
-            warning: '⚠️',
-            info: 'ℹ️'
-        };
-        const toast = document.createElement('div');
-        toast.style.cssText = 'min-width:260px;max-width:360px;padding:12px 14px;background:#fff;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);border-left:4px solid '+(colors[type]||colors.info)+';font-size:0.95em;display:flex;align-items:center;gap:8px;';
-        toast.innerHTML = `<span>${icons[type]||icons.info}</span><div>${message}</div>`;
-        container.appendChild(toast);
-        setTimeout(() => {
-            toast.style.transition = 'opacity 200ms ease-out, transform 200ms ease-out';
-            toast.style.opacity = '0';
-            toast.style.transform = 'translateY(8px)';
-            setTimeout(() => toast.remove(), 220);
-        }, duration);
+      const master = audioContext.createGain();
+      master.gain.value = 0.35;
+      master.connect(audioContext.destination);
+      window.__MASTER_GAIN = master;
     } catch (e) {
-        // Fallback silently
-        console.warn('Toast failed:', e);
+      console.warn('Master gain creation failed:', e);
     }
+  }
+  return audioContext;
 }
 
-// AI Generate - GLOBAL FUNCTION (defined early, before DOM init)
-window.generateAIComposition = function() {
-    try {
-        console.log('=== AI GENERATE CALLED ===');
-        
-        const canvas = document.getElementById('composition-canvas');
-        if (!canvas) {
-            alert('Canvas not found - make sure you are on the Compose tab');
-            showToast('error', 'Canvas not found');
-            return;
-        }
-        
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-            alert('Failed to get canvas context');
-            showToast('error', 'Canvas context failed');
-            return;
-        }
-        
-        // Check composer
-        if (!window.composer) {
-            alert('Composer not initialized - try refreshing the page');
-            showToast('error', 'Composer not ready');
-            return;
-        }
-        
-        console.log('Canvas OK, generating melody...');
-        alert('Generating melody...');
-        
-        const noteCount = 8 + Math.floor(Math.random() * 9);
-        const notes = [];
-        const baseY = canvas.height / 2;
-        const yRange = canvas.height * 0.6;
-        
-        // Generate notes
-        for (let i = 0; i < noteCount; i++) {
-            const x = (canvas.width / (noteCount + 1)) * (i + 1);
-            let y = baseY;
-            
-            if (i > 0) {
-                const prevY = notes[i - 1].y;
-                const maxJump = yRange * 0.25;
-                y = prevY + (Math.random() - 0.5) * maxJump;
-                y = Math.max(canvas.height * 0.15, Math.min(canvas.height * 0.85, y));
-            } else {
-                y = baseY + (Math.random() - 0.5) * yRange * 0.2;
-            }
-            
-            notes.push({ x, y });
-        }
-        
-        console.log('Generated', noteCount, 'notes');
-        
-        // Draw canvas
-        ctx.fillStyle = '#34495e';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        
-        // Grid
-        ctx.strokeStyle = '#555';
-        ctx.lineWidth = 1;
-        for (let i = 0; i <= canvas.width; i += 50) {
-            ctx.beginPath();
-            ctx.moveTo(i, 0);
-            ctx.lineTo(i, canvas.height);
-            ctx.stroke();
-        }
-        for (let i = 0; i <= canvas.height; i += 50) {
-            ctx.beginPath();
-            ctx.moveTo(0, i);
-            ctx.lineTo(canvas.width, i);
-            ctx.stroke();
-        }
-        
-        // Center line
-        ctx.strokeStyle = '#667eea';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(0, canvas.height / 2);
-        ctx.lineTo(canvas.width, canvas.height / 2);
-        ctx.stroke();
-        
-        // Draw notes - BRIGHT GREEN CIRCLES
-        ctx.fillStyle = '#00ff00';
-        ctx.strokeStyle = '#00cc00';
-        ctx.lineWidth = 3;
-        notes.forEach(note => {
-            ctx.beginPath();
-            ctx.arc(note.x, note.y, 12, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-        });
-        
-        console.log('Canvas drawn with', noteCount, 'green circles');
-        
-        // Store for playback
-        window._composerNotes = notes;
-        
-        alert(`✓ Generated ${noteCount} notes! Click Play to hear it.`);
-        showToast('success', `Generated ${noteCount}-note melody! Click Play.`);
-        
-    } catch (e) {
-        console.error('AI Generation error:', e);
-        alert('ERROR: ' + e.message);
-        showToast('error', 'Error: ' + e.message);
-    }
-};
+async function resumeAudioIfNeeded() {
+  const ctx = ensureAudioContext();
+  if (ctx.state === 'suspended') {
+    await ctx.resume();
+  }
+}
 
-// Initialize the app
-document.addEventListener('DOMContentLoaded', async () => {
-    try {
-        // Clear old caches and register new service worker
-        if ('caches' in window) {
-            caches.keys().then(names => {
-                names.forEach(name => {
-                    if (name.startsWith('ethno-') && !name.includes('v4')) {
-                        console.log('Deleting old cache:', name);
-                        caches.delete(name);
-                    }
-                });
-            });
-        }
-        
-        // Register/update service worker
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.getRegistrations().then(regs => {
-                regs.forEach(reg => {
-                    console.log('Service Worker update check');
-                    reg.update();
-                });
-            });
-        }
-        
-        // Global error handlers to surface issues in UI
-        window.addEventListener('error', (event) => {
-            console.error('Uncaught error:', event.error || event.message);
-            const analysisResults = document.getElementById('analysis-results');
-            if (analysisResults) {
-                analysisResults.innerHTML = `
-                    <div style="padding: 20px; background: #ffebee; border-radius: 8px; border-left: 4px solid #f44336;">
-                        <h4 style="color: #c62828; margin-top: 0;">❌ App Error</h4>
-                        <p style="color: #d32f2f; margin: 10px 0;">${(event.error && event.error.message) || event.message || 'Unknown error'}</p>
-                        <p style="margin: 0; font-size: 0.9em;">Open the browser console for details.</p>
-                    </div>
-                `;
-                analysisResults.style.display = 'block';
-            }
-        });
-        window.addEventListener('unhandledrejection', (event) => {
-            console.error('Unhandled rejection:', event.reason);
-            const analysisResults = document.getElementById('analysis-results');
-            if (analysisResults) {
-                analysisResults.innerHTML = `
-                    <div style="padding: 20px; background: #ffebee; border-radius: 8px; border-left: 4px solid #f44336;">
-                        <h4 style="color: #c62828; margin-top: 0;">❌ App Error</h4>
-                        <p style="color: #d32f2f; margin: 10px 0;">${(event.reason && event.reason.message) || 'Unhandled promise rejection'}</p>
-                        <p style="margin: 0; font-size: 0.9em;">Open the browser console for details.</p>
-                    </div>
-                `;
-                analysisResults.style.display = 'block';
-            }
-        });
-        audioAnalyzer = new AudioAnalyzer();
-        await audioAnalyzer.initialize();
-        audioContext = audioAnalyzer.audioContext;
-        // Create master gain for global volume control (Classroom Mode)
-        try {
-            const masterGain = audioContext.createGain();
-            // Increased from 0.35 to 1.0 for maximum audio output
-            masterGain.gain.value = 1.0;
-            masterGain.connect(audioContext.destination);
-            window.__MASTER_GAIN = masterGain;
-        } catch (e) {
-            console.warn('Master gain init failed:', e);
-        }
-        
-        progressTracker = new ProgressTracker();
-        progressTracker.loadProgress();
-        
-        // Initialize accessibility features
-        if (mobileOptimizations.isMobile()) {
-            mobileOptimizations.optimizeForMobile();
-            mobileOptimizations.enableTouchGestures();
-        }
-        
-        // Initialize accessibility controls
-        initializeAccessibility();
-        
-        window.composer = new MusicComposer(audioContext);
-        pitchGame = new PitchMatchingGame(audioContext);
-        
-        initializeTabs();
-        initializeCultureExplorer();
-        initializeAnalyzer();
-        initializeGames();
-        initializeRecorder();
-        initializeLivePitch();
-        initializeComposer();
-        initializeProgress();
-        initializeDarkMode();
-        initializeClassroomMode();
-        displayExpandedCultures();
-        initializeExtendedQuiz();
-        initializeLessonPlans();
-        initializeAudioUnlockOverlay();
-        initializeTeacherDashboard();
-        
-        // Attach AI Generate button listener at top level
-        document.getElementById('ai-generate')?.addEventListener('click', () => {
-            console.log('AI Generate clicked');
-            window.generateAIComposition();
-        });
-        if (process.env.NODE_ENV === 'production') {
-            registerServiceWorker();
-        }
-        
-        // console.log('✅ App initialized successfully!');
-    } catch (error) {
-        console.error('❌ Error initializing app:', error);
-    }
-});
+/* =========================
+   Analyze status banner (prevents DOM wipe)
+========================= */
+function ensureAnalysisStatus() {
+  const results = $('#analysis-results');
+  if (!results) return null;
 
-// Tab Navigation - Event delegation to avoid duplicate listeners
-let tabListenersInitialized = false;
+  let status = $('#analysis-status');
+  if (!status) {
+    status = document.createElement('div');
+    status.id = 'analysis-status';
+    status.style.cssText = `
+      margin: 0 0 16px;
+      padding: 14px 16px;
+      border-radius: 10px;
+      font-weight: 700;
+      border-left: 5px solid #667eea;
+      background: #eef2ff;
+      color: #1e3a8a;
+    `;
+    results.prepend(status);
+  }
+  return status;
+}
 
-// ensureAudioReady is already defined later; keep only one definition
+function setAnalysisStatus(message, opts = {}) {
+  const results = $('#analysis-results');
+  if (results) results.style.display = 'block';
 
-// Proactively unlock audio on first user interaction anywhere
-try {
-    document.addEventListener('pointerdown', () => ensureAudioReady(), { once: true, passive: true });
-    document.addEventListener('keydown', () => ensureAudioReady(), { once: true, passive: true });
-} catch {}
+  const status = ensureAnalysisStatus();
+  if (!status) return;
 
+  const { bg = '#eef2ff', color = '#1e3a8a', border = '#667eea' } = opts;
+  status.style.background = bg;
+  status.style.color = color;
+  status.style.borderLeftColor = border;
+  status.textContent = message;
+}
+
+/* =========================
+   Tabs
+========================= */
 function initializeTabs() {
-    if (tabListenersInitialized) return; // Only setup once
-    
-    document.addEventListener('click', (e) => {
-        if (!e.target?.classList.contains('tab-btn')) return;
-        // Opportunistically ensure audio is ready on tab switch
-        ensureAudioReady();
-        
-        const tabName = e.target.dataset.tab;
-        const tabButtons = document.querySelectorAll('.tab-btn');
-        const tabContents = document.querySelectorAll('.tab-content');
-        
-        // Update active states
-        tabButtons.forEach(btn => btn.classList.remove('active'));
-        tabContents.forEach(content => content.classList.remove('active'));
-        
-        e.target.classList.add('active');
-        document.getElementById(`${tabName}-tab`)?.classList.add('active');
+  const tabButtons = $$('.tab-btn');
+  const tabPanels = $$('.tab-content');
 
-        // Initialize ML Trainer UI when trainer tab is opened
-        if (tabName === 'trainer') {
-            initMLTrainerUI().catch(err => console.error('Failed to initialize ML Trainer:', err));
-            // Pass the global audioAnalyzer to the trainer
-            if (audioAnalyzer) {
-                setAudioAnalyzer(audioAnalyzer);
-            }
-        }
-
-        // Ensure Leaflet map resizes correctly when Explore tab becomes visible
-        if (tabName === 'explore' && worldMapInstance) {
-            setTimeout(() => worldMapInstance.invalidateSize(), 100);
-        }
-    });
-    
-    tabListenersInitialized = true;
-}
-
-// PWA: Register Service Worker
-function registerServiceWorker() {
-    if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-            const guessBaseFromLocation = () => {
-                const parts = window.location.pathname.split('/').filter(Boolean);
-                return parts.length ? `/${parts[0]}/` : '/';
-            };
-
-            const base = (typeof __webpack_public_path__ !== 'undefined' && __webpack_public_path__)
-                ? __webpack_public_path__
-                : guessBaseFromLocation();
-
-            const normalizedBase = base.endsWith('/') ? base : `${base}/`;
-            const swUrl = new URL('sw.js', window.location.origin + normalizedBase).toString();
-            navigator.serviceWorker
-                .register(swUrl, { scope: normalizedBase })
-                .then(reg => console.log('Service worker registered', reg.scope))
-                .catch(err => console.warn('Service worker registration failed', err));
-        });
-    }
-}
-
-// Teacher Dashboard (local only)
-let dashboardSession = null;
-let dashboardTimer = null;
-
-function initializeTeacherDashboard() {
-    const startBtn = document.getElementById('start-session-btn');
-    const endBtn = document.getElementById('end-session-btn');
-    const exportBtn = document.getElementById('export-csv-btn');
-    const clearBtn = document.getElementById('clear-session-btn');
-    
-    // Load saved session if exists
-    loadDashboardSession();
-    
-    startBtn?.addEventListener('click', () => {
-        const className = document.getElementById('class-name-input')?.value || 'Untitled Class';
-        const studentCount = parseInt(document.getElementById('student-count-input')?.value) || 25;
-        
-        dashboardSession = {
-            className,
-            studentCount,
-            startTime: new Date().toISOString(),
-            activities: {
-                tracksAnalyzed: 0,
-                gamesPlayed: 0,
-                quizzesTaken: 0,
-                totalTimeSeconds: 0
-            },
-            events: []
-        };
-        
-        saveDashboardSession();
-        showActiveSession();
-        startBtn.style.display = 'none';
-        endBtn.style.display = 'inline-block';
-        
-        // Start session timer: increment seconds every 1s, update UI every 3s when Dashboard tab is visible
-        let secondsCounter = 0;
-        if (dashboardTimer) clearInterval(dashboardTimer);
-        dashboardTimer = setInterval(() => {
-            if (!dashboardSession) {
-                clearInterval(dashboardTimer);
-                dashboardTimer = null;
-                return;
-            }
-            dashboardSession.activities.totalTimeSeconds++;
-            secondsCounter++;
-            if (secondsCounter % 3 === 0) {
-                const dashboardTab = document.getElementById('dashboard-tab');
-                if (dashboardTab?.classList.contains('active')) {
-                    updateDashboardDisplay();
-                }
-            }
-        }, 1000);
-    });
-    
-    endBtn?.addEventListener('click', () => {
-        if (confirm('End this session? Data will be saved locally.')) {
-            if (dashboardTimer) clearInterval(dashboardTimer);
-            dashboardTimer = null;
-            saveDashboardSession();
-            showToast('success', 'Session ended. Data saved locally.');
-        }
-    });
-    
-    exportBtn?.addEventListener('click', () => {
-        exportSessionToCSV();
-    });
-    
-    clearBtn?.addEventListener('click', () => {
-        if (confirm('Clear all session data? This cannot be undone.')) {
-            dashboardSession = null;
-            localStorage.removeItem('teacherDashboard');
-            if (dashboardTimer) clearInterval(dashboardTimer);
-            dashboardTimer = null;
-            document.getElementById('active-session-panel').style.display = 'none';
-            document.getElementById('start-session-btn').style.display = 'inline-block';
-            document.getElementById('end-session-btn').style.display = 'none';
-            showToast('success', 'Session data cleared.');
-        }
-    });
-}
-
-function loadDashboardSession() {
-    const saved = localStorage.getItem('teacherDashboard');
-    if (saved) {
-        try {
-            dashboardSession = JSON.parse(saved);
-            showActiveSession();
-            updateDashboardDisplay();
-            document.getElementById('start-session-btn').style.display = 'none';
-            document.getElementById('end-session-btn').style.display = 'inline-block';
-        } catch (e) {
-            console.warn('Failed to load dashboard session', e);
-        }
-    }
-}
-
-function saveDashboardSession() {
-    if (dashboardSession) {
-        localStorage.setItem('teacherDashboard', JSON.stringify(dashboardSession));
-    }
-}
-
-function showActiveSession() {
-    const panel = document.getElementById('active-session-panel');
-    if (panel) panel.style.display = 'block';
-}
-
-function updateDashboardDisplay() {
-    if (!dashboardSession) return;
-    
-    const classNameEl = document.getElementById('current-class-name');
-    const studentCountEl = document.getElementById('current-student-count');
-    const startTimeEl = document.getElementById('session-start-time');
-    const durationEl = document.getElementById('session-duration');
-    
-    if (classNameEl) classNameEl.textContent = dashboardSession.className;
-    if (studentCountEl) studentCountEl.textContent = dashboardSession.studentCount;
-    if (startTimeEl) startTimeEl.textContent = new Date(dashboardSession.startTime).toLocaleString();
-    
-    const totalSec = dashboardSession.activities.totalTimeSeconds;
-    const hours = Math.floor(totalSec / 3600);
-    const mins = Math.floor((totalSec % 3600) / 60);
-    const secs = totalSec % 60;
-    if (durationEl) durationEl.textContent = `${hours}h ${mins}m ${secs}s`;
-    
-    // Update activity counts
-    const tracksEl = document.getElementById('tracks-analyzed-count');
-    const gamesEl = document.getElementById('games-played-count');
-    const quizzesEl = document.getElementById('quizzes-taken-count');
-    const avgTimeEl = document.getElementById('avg-time-on-task');
-    
-    if (tracksEl) tracksEl.textContent = dashboardSession.activities.tracksAnalyzed;
-    if (gamesEl) gamesEl.textContent = dashboardSession.activities.gamesPlayed;
-    if (quizzesEl) quizzesEl.textContent = dashboardSession.activities.quizzesTaken;
-    
-    const totalActivities = dashboardSession.activities.tracksAnalyzed + 
-                           dashboardSession.activities.gamesPlayed + 
-                           dashboardSession.activities.quizzesTaken;
-    
-    if (avgTimeEl) {
-        if (totalActivities > 0) {
-            const avgSec = Math.floor(totalSec / totalActivities);
-            const avgMin = Math.floor(avgSec / 60);
-            const avgSecRem = avgSec % 60;
-            avgTimeEl.textContent = `${avgMin}m ${avgSecRem}s`;
-        } else {
-            avgTimeEl.textContent = '—';
-        }
-    }
-}
-
-function exportSessionToCSV() {
-    if (!dashboardSession) {
-        showToast('warning', 'No session data to export');
-        return;
-    }
-    
-    let csv = 'Class Name,Student Count,Start Time,Duration (seconds),Tracks Analyzed,Games Played,Quizzes Taken\n';
-    csv += `"${dashboardSession.className}",${dashboardSession.studentCount},"${dashboardSession.startTime}",${dashboardSession.activities.totalTimeSeconds},${dashboardSession.activities.tracksAnalyzed},${dashboardSession.activities.gamesPlayed},${dashboardSession.activities.quizzesTaken}\n`;
-    
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `session-${dashboardSession.className.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-}
-
-// Track dashboard activities when they occur
-function trackDashboardActivity(type) {
-    if (!dashboardSession) return;
-    
-    if (type === 'analyze') {
-        dashboardSession.activities.tracksAnalyzed++;
-    } else if (type === 'game') {
-        dashboardSession.activities.gamesPlayed++;
-    } else if (type === 'quiz') {
-        dashboardSession.activities.quizzesTaken++;
-    }
-    
-    dashboardSession.events.push({
-        type,
-        timestamp: new Date().toISOString()
-    });
-    
-    saveDashboardSession();
-    updateDashboardDisplay();
-}
-
-
-// Audio unlock overlay for iPad/Safari autoplay policies
-function initializeAudioUnlockOverlay() {
-    const overlay = document.getElementById('audio-unlock-overlay');
-    const btn = document.getElementById('audio-unlock-button');
-    if (!overlay || !btn) return;
-    
-    const shouldShow = () => {
-        const isMobile = /iPad|iPhone|iPod|Android/i.test(navigator.userAgent);
-        const isSafari = /Safari/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent);
-        return isMobile || isSafari || (audioContext && audioContext.state === 'suspended');
-    };
-    
-    const hide = () => {
-        overlay.style.display = 'none';
-        showToast('success', 'Audio enabled');
-    };
-    const show = () => {
-        overlay.style.display = 'flex';
-    };
-    
-    const resumeAudio = async () => {
-        try {
-            // Ensure AudioContext exists
-            if (!audioContext) {
-                try {
-                    // Prefer existing analyzer to keep graph consistent
-                    if (!audioAnalyzer) {
-                        audioAnalyzer = new AudioAnalyzer();
-                        await audioAnalyzer.initialize();
-                    }
-                    audioContext = audioAnalyzer.audioContext || new (window.AudioContext || window.webkitAudioContext)();
-                } catch (err) {
-                    // Fallback to direct AudioContext creation
-                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                }
-                // Create master gain if missing
-                if (!window.__MASTER_GAIN) {
-                    try {
-                        const masterGain = audioContext.createGain();
-                        masterGain.gain.value = 1.0;
-                        masterGain.connect(audioContext.destination);
-                        window.__MASTER_GAIN = masterGain;
-                    } catch (e) {
-                        console.warn('Master gain init during unlock failed:', e);
-                    }
-                }
-            }
-
-            // Resume if suspended
-            if (audioContext.state === 'suspended') {
-                await audioContext.resume();
-            }
-
-            // iOS/Safari often requires a short playback to fully unlock
-            try {
-                const osc = audioContext.createOscillator();
-                const gain = audioContext.createGain();
-                gain.gain.value = 0.0001; // inaudible
-                osc.frequency.value = 440;
-                osc.connect(gain);
-                const master = (typeof window !== 'undefined' && window.__MASTER_GAIN) ? window.__MASTER_GAIN : null;
-                (master ? gain.connect(master) : gain.connect(audioContext.destination));
-                const now = audioContext.currentTime;
-                osc.start(now);
-                osc.stop(now + 0.05);
-            } catch (e) {
-                // Ignore; unlock attempt still valid
-            }
-
-            hide();
-            showToast('success', 'Audio unlocked');
-        } catch (e) {
-            console.warn('Audio resume failed:', e);
-            showToast('error', 'Audio unlock failed. Tap Play or try again.');
-        }
-    };
-
-    if (shouldShow()) show();
-    
-    btn.addEventListener('click', resumeAudio);
-    
-    // Any user gesture can unlock audio in Safari
-    ['touchstart', 'mousedown', 'keydown', 'click'].forEach(ev => {
-        document.addEventListener(ev, resumeAudio, { once: true, passive: true });
-    });
-}
-
-// Audio readiness helper and hooks
-function ensureAudioReady() {
-    try {
-        // Create AudioContext if missing
-        if (!audioContext) {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        // Create master gain if missing
-        if (typeof window !== 'undefined' && !window.__MASTER_GAIN && audioContext) {
-            const masterGain = audioContext.createGain();
-            // Respect classroom mode default, else healthy default
-            const classroom = typeof document !== 'undefined' && document.body && document.body.classList && document.body.classList.contains('classroom-mode');
-            masterGain.gain.value = classroom ? 0.18 : 1.0;
-            masterGain.connect(audioContext.destination);
-            window.__MASTER_GAIN = masterGain;
-        }
-        // Attempt resume on Safari/iOS
-        if (audioContext && audioContext.state === 'suspended') {
-            audioContext.resume().catch(() => {});
-        }
-        return !!audioContext;
-    } catch (e) {
-        console.warn('ensureAudioReady: failed to initialize audio', e);
-        return false;
-    }
-}
-
-// Resume on page focus/visibility
-if (typeof document !== 'undefined') {
-    const resumeIfNeeded = () => {
-        if (audioContext && audioContext.state === 'suspended') {
-            audioContext.resume().catch(() => {});
-        }
-    };
-    document.addEventListener('visibilitychange', () => {
-        if (!document.hidden) resumeIfNeeded();
-    });
-    window.addEventListener('focus', resumeIfNeeded);
-}
-
-// Culture Explorer
-function initializeCultureExplorer() {
-    const basicCultures = getAllCultures();
-    const expandedCultures = getAllExpandedCultures();
-    const cultures = dedupeCultures(basicCultures, expandedCultures);
-    const cultureGrid = document.getElementById('culture-grid');
-    const cultureCount = document.getElementById('culture-count');
-    if (cultureCount) {
-        cultureCount.textContent = cultures.length.toString();
-    }
-    // Clear existing grid to avoid duplicates on re-initialization
-    if (cultureGrid) {
-        cultureGrid.innerHTML = '';
-    }
-    
-    // Initialize world map
-    initializeWorldMap(cultures);
-    
-    cultures.forEach(culture => {
-        const card = document.createElement('div');
-        card.className = 'culture-card';
-        card.dataset.cultureId = culture.id;
-        card.innerHTML = `
-            <div style="font-size: 3em; margin-bottom: 10px;">${culture.emoji}</div>
-            <h3>${culture.name}</h3>
-            <p>${culture.region}</p>
-        `;
-        
-        card.addEventListener('click', () => showCultureDetails(culture));
-        cultureGrid.appendChild(card);
-    });
-}
-
-function initializeWorldMap(cultures) {
-    const mapElement = document.getElementById('world-map');
-    const legendElement = document.getElementById('map-legend');
-    const resetBtn = document.getElementById('reset-map-filter');
-    if (!mapElement) return;
-    
-    try {
-        // Ensure marker assets resolve in bundled builds (use CDN URLs to avoid bundler image loaders)
-        L.Icon.Default.mergeOptions({
-            iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-            iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-            shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png'
-        });
-        
-        // Create Leaflet map centered on world
-        const map = L.map(mapElement).setView([20, 0], 2);
-        worldMapInstance = map;
-        
-        // Add CartoDB Positron tiles (English labels globally)
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-            attribution: '© OpenStreetMap contributors, © CARTO',
-            maxZoom: 19,
-            minZoom: 2,
-            subdomains: 'abcd'
-        }).addTo(map);
-
-        map.whenReady(() => {
-            map.invalidateSize();
-        });
-    
-    // Define precise coordinates for each culture and regional colors
-    const cultureCoordinates = {
-        'west-african': { lat: 12, lng: -5, color: '#FFE66D', region: 'West Africa' },
-        'indian-classical': { lat: 23, lng: 78, color: '#4ECDC4', region: 'South Asia' },
-        'chinese-traditional': { lat: 35, lng: 110, color: '#FF6B6B', region: 'East Asia' },
-        'middle-eastern': { lat: 30, lng: 45, color: '#95E1D3', region: 'Middle East' },
-        // Shifted west/north to better represent continental Latin America
-        'latin-american': { lat: 15.915056870105534, lng: -89.64109195180036, color: '#FCBAD3', region: 'Latin America' },
-        'aboriginal-australian': { lat: -25, lng: 133, color: '#A8D8EA', region: 'Australia' },
-        'european-folk': { lat: 52, lng: 10, color: '#AA96DA', region: 'Europe' },
-        'japanese-traditional': { lat: 36, lng: 138, color: '#FF6B6B', region: 'East Asia' },
-        'mongolian-throat-singing': { lat: 47, lng: 103, color: '#FFA07A', region: 'Central Asia' },
-        'indonesian-gamelan': { lat: -7, lng: 110, color: '#F38181', region: 'Southeast Asia' },
-        'flamenco': { lat: 37, lng: -5, color: '#BB8FCE', region: 'Spain' },
-        'andean': { lat: -15, lng: -70, color: '#98D8C8', region: 'South America' },
-        'bluegrass': { lat: 37, lng: -85, color: '#C9ADA7', region: 'North America' },
-        'brazilian-samba': { lat: -23, lng: -43, color: '#F4A261', region: 'South America' },
-        'caribbean-steel-pan': { lat: 11, lng: -61, color: '#E76F51', region: 'Caribbean' },
-        'korean-traditional': { lat: 37, lng: 127, color: '#FF6B6B', region: 'East Asia' },
-        'venezuelan-joropo': { lat: 8, lng: -66, color: '#90A955', region: 'Venezuela' },
-        'caribbean-rhythms': { lat: 18, lng: -75, color: '#F28482', region: 'Caribbean Islands' },
-        'guyana': { lat: 5, lng: -59, color: '#E76F51', region: 'Caribbean' }
-    };
-    
-    // Build legend by unique regions
-    const regionColors = {};
-    const legendRegions = new Set();
-    Object.values(cultureCoordinates).forEach(({ region, color }) => {
-        if (!regionColors[region]) {
-            regionColors[region] = color;
-            legendRegions.add(region);
-        }
-    });
-    
-    let legendHTML = '';
-    Array.from(legendRegions).sort().forEach(region => {
-        legendHTML += `
-            <div style="padding: 10px; background: white; border-radius: 6px; border-left: 4px solid ${regionColors[region]}; cursor: pointer;" data-region="${region}">
-                <strong style="color: ${regionColors[region]};">●</strong> ${region}
-            </div>
-        `;
-    });
-    
-    // Add individual markers for each culture
-    cultures.forEach(culture => {
-        const cultureCoord = cultureCoordinates[culture.id];
-        if (cultureCoord) {
-            const marker = L.circleMarker(
-                [cultureCoord.lat, cultureCoord.lng],
-                {
-                    radius: 10,
-                    fillColor: cultureCoord.color,
-                    color: '#333',
-                    weight: 2,
-                    opacity: 0.9,
-                    fillOpacity: 0.75
-                }
-            ).addTo(map);
-            
-            // Popup with culture info
-            marker.bindPopup(`
-                <div style="font-weight: bold; margin-bottom: 5px; font-size: 1.1em;">
-                    ${culture.emoji} ${culture.name}
-                </div>
-                <div style="font-size: 0.85em; line-height: 1.4;">
-                    <strong>Region:</strong> ${cultureCoord.region}<br>
-                    <strong>Description:</strong> ${culture.description.substring(0, 80)}...
-                </div>
-                <button id="view-details-${culture.id}" style="margin-top: 8px; padding: 4px 8px; background: ${cultureCoord.color}; border: none; border-radius: 4px; cursor: pointer; font-size: 0.8em; color: #333; font-weight: 600;">
-                    View Details
-                </button>
-            `);
-            
-            // Add event listener after popup opens
-            marker.on('popupopen', () => {
-                const detailsBtn = document.getElementById(`view-details-${culture.id}`);
-                if (detailsBtn) {
-                    detailsBtn.addEventListener('click', () => {
-                        // Scroll to the culture card
-                        const cultureCard = document.querySelector(`[data-culture-id="${culture.id}"]`);
-                        if (cultureCard) {
-                            cultureCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            // Highlight the card briefly
-                            cultureCard.style.transform = 'scale(1.05)';
-                            cultureCard.style.boxShadow = '0 8px 16px rgba(102, 126, 234, 0.4)';
-                            setTimeout(() => {
-                                cultureCard.style.transform = '';
-                                cultureCard.style.boxShadow = '';
-                            }, 2000);
-                        }
-                    });
-                }
-            });
-            
-            // Click to filter cultures by region
-            marker.on('click', () => {
-                filterCulturesByRegion(cultureCoord.region);
-            });
-        }
+  function activateTab(name) {
+    tabButtons.forEach(btn => {
+      const active = btn.dataset.tab === name;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-selected', active ? 'true' : 'false');
     });
 
-    // Add standalone marker for Great Britain (Europe)
-    const gbCoord = { lat: 54.5, lng: -3.0, color: regionColors['Europe'] || '#AA96DA', region: 'Europe' };
-    const gbMarker = L.circleMarker(
-        [gbCoord.lat, gbCoord.lng],
-        {
-            radius: 10,
-            fillColor: gbCoord.color,
-            color: '#333',
-            weight: 2,
-            opacity: 0.9,
-            fillOpacity: 0.75
-        }
-    ).addTo(map);
-    gbMarker.bindPopup(`
-        <div style="font-weight: bold; margin-bottom: 5px; font-size: 1.1em;">
-            🇬🇧 Great Britain
-        </div>
-        <div style="font-size: 0.85em; line-height: 1.4;">
-            <strong>Region:</strong> ${gbCoord.region}<br>
-            <strong>Description:</strong> Key center within European musical traditions.
-        </div>
-    `);
-    gbMarker.on('click', () => {
-        filterCulturesByRegion(gbCoord.region);
+    tabPanels.forEach(panel => {
+      const active = panel.id === `${name}-tab`;
+      panel.classList.toggle('active', active);
+      panel.style.display = active ? 'block' : 'none';
     });
-    
-        // Add legend event listeners
-    if (legendElement) legendElement.innerHTML = legendHTML;
-    legendElement?.querySelectorAll('[data-region]').forEach(item => {
-        item.addEventListener('click', () => {
-            const region = item.dataset.region;
-            filterCulturesByRegion(region);
-            item.style.backgroundColor = '#f0f0f0';
-            item.style.transform = 'scale(1.05)';
-        });
-    });
-    
-    // Reset filter
-    resetBtn?.addEventListener('click', () => {
-        filterCulturesByRegion(null);
-        legendElement?.querySelectorAll('[data-region]').forEach(item => {
-            item.style.backgroundColor = '';
-            item.style.transform = '';
-        });
-    });
-    
-    // Fit map to show all culture markers
-    const allMarkers = cultures
-        .filter(c => cultureCoordinates[c.id])
-        .map(c => {
-            const coord = cultureCoordinates[c.id];
-            return L.circleMarker([coord.lat, coord.lng]);
-        });
-    
-    if (allMarkers.length > 0) {
-        const group = new L.featureGroup(allMarkers);
-        map.fitBounds(group.getBounds().pad(0.15));
+
+    // Leaflet maps need resize fix when shown
+    if (name === 'explore') {
+      setTimeout(() => window.__WORLD_MAP?.invalidateSize?.(), 150);
+      setTimeout(() => window.__WORLD_MAP?.invalidateSize?.(), 600);
     }
-    
-    // Ensure map tiles render correctly after layout and when window resizes
-    setTimeout(() => map.invalidateSize(), 200);
-    setTimeout(() => map.invalidateSize(), 600);
-    window.addEventListener('resize', () => map.invalidateSize());
-    } catch (err) {
-        console.error('World map init failed:', err);
-        mapElement.innerHTML = '<p style="padding: 20px; background: #ffecec; border: 1px solid #f5c2c2; border-radius: 8px; color: #c0392b;">Map could not load. Please refresh or check your connection.</p>';
-    }
+  }
+
+  tabButtons.forEach(btn => {
+    on(btn, 'click', () => activateTab(btn.dataset.tab));
+  });
+
+  // Make sure only the active panel is visible on load
+  const activeBtn = tabButtons.find(b => b.classList.contains('active')) || tabButtons[0];
+  if (activeBtn) activateTab(activeBtn.dataset.tab);
 }
 
-function filterCulturesByRegion(region) {
-    const cultureCards = document.querySelectorAll('.culture-card');
-    let visibleCount = 0;
-    
-    // Map culture region text to the new region naming
-    const regionMap = {
-        'West Africa': 'West Africa',
-        'South Asia': 'South Asia',
-        'East Asia': 'East Asia',
-        'Middle East': 'Middle East',
-        'Latin America': 'Latin America',
-        'Australia': 'Australia',
-        'Europe': 'Europe',
-        'Spain': 'Spain',
-        'Central Asia': 'Central Asia',
-        'Southeast Asia': 'Southeast Asia',
-        'South America': 'South America',
-        'North America': 'North America',
-        'Caribbean': 'Caribbean',
-        'Venezuela': 'Venezuela',
-        'Caribbean Islands': 'Caribbean Islands',
-        'South America/Caribbean': 'Caribbean'
-    };
-    
-    cultureCards.forEach(card => {
-        const cardRegion = card.querySelector('p').textContent;
-        const mappedRegion = regionMap[cardRegion] || cardRegion;
-        
-        const normalizedMapped = (mappedRegion || '').toLowerCase();
-        const targetRegion = (region || '').toLowerCase();
-        if (!region || normalizedMapped === targetRegion || cardRegion === region || normalizedMapped.includes(targetRegion)) {
-            card.style.display = 'block';
-            card.style.opacity = '1';
-            visibleCount++;
-        } else {
-            card.style.display = 'none';
-            card.style.opacity = '0.3';
-        }
-    });
-    
-    // Scroll to culture grid
-    const grid = document.getElementById('culture-grid');
-    if (grid) {
-        grid.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+/* =========================
+   Accessibility menu toggle
+========================= */
+function initializeAccessibilityMenu() {
+  const toggle = $('#accessibility-menu-toggle');
+  const menu = $('#accessibility-menu');
+  if (!toggle || !menu) return;
+
+  on(toggle, 'click', (e) => {
+    e.stopPropagation();
+    const isOpen = menu.style.display !== 'none' && menu.style.display !== '';
+    menu.style.display = isOpen ? 'none' : 'grid';
+    toggle.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
+  });
+
+  on(document, 'click', (e) => {
+    if (!menu.contains(e.target) && e.target !== toggle) {
+      menu.style.display = 'none';
+      toggle.setAttribute('aria-expanded', 'false');
     }
+  });
 }
 
-function showCultureDetails(culture) {
-    currentCulture = culture;
-    const playerSection = document.getElementById('player-section');
-    const titleElement = document.getElementById('current-culture-title');
-    const infoElement = document.getElementById('culture-info');
-    
-    titleElement.textContent = `${culture.emoji} ${culture.name} Music`;
-    
-    infoElement.innerHTML = `
-        <p><strong>Region:</strong> ${culture.region}</p>
-        <p><strong>Description:</strong> ${culture.description}</p>
-        <h4>Musical Characteristics:</h4>
-        <ul>
-            <li><strong>Rhythm:</strong> ${culture.characteristics.rhythm}</li>
-            <li><strong>Scales:</strong> ${culture.characteristics.scales}</li>
-            <li><strong>Instruments:</strong> ${culture.characteristics.instruments}</li>
-            <li><strong>Tempo:</strong> ${culture.characteristics.tempo}</li>
-        </ul>
-        <h4>Interesting Facts:</h4>
-        <ul>
-            ${culture.facts.map(fact => `<li>${fact}</li>`).join('')}
-        </ul>
-    `;
-    
-    playerSection.style.display = 'block';
-    playerSection.scrollIntoView({ behavior: 'smooth' });
-    
-    // Set up play button
-    const playBtn = document.getElementById('play-btn');
-    const stopBtn = document.getElementById('stop-btn');
-    
-    playBtn.onclick = () => playCultureDemo(culture);
-    stopBtn.onclick = () => stopCultureDemo();
-}
-
-async function playCultureDemo(culture) {
-    // Create a musical demonstration based on culture characteristics
-    if (!audioContext) {
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    
-    // Resume audio context if suspended
-    if (audioContext.state === 'suspended') {
-        await audioContext.resume();
-    }
-    
-    // Different scales for different cultures
-    const scales = {
-        'chinese-traditional': ['C4', 'D4', 'E4', 'G4', 'A4', 'C5'], // Pentatonic
-        'indian-classical': ['C4', 'D4', 'E4', 'F4', 'G4', 'A4', 'B4', 'C5'], // Raga-inspired
-        'west-african': ['C4', 'D4', 'E4', 'G4', 'A4'], // Pentatonic
-        'middle-eastern': ['C4', 'Db4', 'E4', 'F4', 'G4', 'Ab4', 'B4', 'C5'], // Maqam-inspired
-        'latin-american': ['C4', 'D4', 'E4', 'F4', 'G4', 'A4', 'B4', 'C5'], // Major scale
-        'japanese-traditional': ['D4', 'F4', 'G4', 'A4', 'C5'], // Japanese pentatonic
-        'european-folk': ['C4', 'D4', 'E4', 'F4', 'G4', 'A4', 'B4', 'C5'], // Major
-        'aboriginal-australian': ['C3', 'E3', 'G3', 'C4'] // Drone-based
-    };
-    
-    const scale = scales[culture.id] || scales['chinese-traditional'];
-    
-    // Play a simple melody using Web Audio API
-    const currentTime = audioContext.currentTime;
-    scale.forEach((note, i) => {
-        playNote(noteToFrequency(note), currentTime + i * 0.5, 0.4);
-    });
-    
-    visualizeWaveform();
-}
-
-function noteToFrequency(note) {
-    const noteMap = {
-        'C': 0, 'C#': 1, 'Db': 1, 'D': 2, 'D#': 3, 'Eb': 3,
-        'E': 4, 'F': 5, 'F#': 6, 'Gb': 6, 'G': 7, 'G#': 8,
-        'Ab': 8, 'A': 9, 'A#': 10, 'Bb': 10, 'B': 11
-    };
-    
-    const match = note.match(/([A-G][b#]?)(\d)/);
-    if (!match) return 440;
-    
-    const noteName = match[1];
-    const octave = parseInt(match[2]);
-    const noteNumber = noteMap[noteName];
-    const a4 = 440;
-    const semitones = (octave - 4) * 12 + noteNumber - 9;
-    
-    return a4 * Math.pow(2, semitones / 12);
-}
-
-function playNote(frequency, time, duration) {
-    // Ensure audioContext exists and is running
-    if (!ensureAudioReady()) {
-        console.warn('playNote: audio not ready');
-        return;
-    }
-    // Resume if suspended (Safari)
-    if (audioContext.state === 'suspended') {
-        audioContext.resume().catch(e => console.warn('Resume failed:', e));
-    }
-    
-    try {
-        const oscillator = audioContext.createOscillator();
-        const gainNode = audioContext.createGain();
-        
-        oscillator.connect(gainNode);
-        // Use master gain if available, otherwise connect directly
-        const masterGain = (typeof window !== 'undefined' && window.__MASTER_GAIN) ? window.__MASTER_GAIN : null;
-        if (masterGain) {
-            gainNode.connect(masterGain);
-        } else {
-            gainNode.connect(audioContext.destination);
-        }
-        
-        oscillator.frequency.value = frequency;
-        oscillator.type = 'sine';
-        
-        gainNode.gain.setValueAtTime(0, time);
-        gainNode.gain.linearRampToValueAtTime(0.85, time + 0.01);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, time + duration);
-        
-        oscillator.start(time);
-        oscillator.stop(time + duration);
-    } catch (e) {
-        console.error('playNote error:', e);
-    }
-}
-
-function stopCultureDemo() {
-    if (currentAudio) {
-        currentAudio.pause();
-        currentAudio.currentTime = 0;
-    }
-}
-
-let animationId = null;
-
-function visualizeWaveform() {
-    const canvas = document.getElementById('waveform');
-    if (!canvas) return;
-    
-    const ctx = canvas.getContext('2d');
-    const width = canvas.width;
-    const height = canvas.height;
-    
-    // Simple waveform visualization
-    ctx.fillStyle = '#2c3e50';
-    ctx.fillRect(0, 0, width, height);
-    
-    ctx.strokeStyle = '#3498db';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    
-    for (let x = 0; x < width; x++) {
-        const y = height / 2 + Math.sin(x * 0.05) * 50 * Math.sin(Date.now() * 0.001);
-        if (x === 0) {
-            ctx.moveTo(x, y);
-        } else {
-            ctx.lineTo(x, y);
-        }
-    }
-    
-    ctx.stroke();
-    // Only continue animation if we're on the explore tab AND waveform canvas exists
-    const exploreTab = document.getElementById('explore-tab');
-    const waveformCanvas = document.getElementById('waveform');
-    if (exploreTab && exploreTab.classList.contains('active') && waveformCanvas && waveformCanvas.offsetParent !== null) {
-        animationId = requestAnimationFrame(visualizeWaveform);
-    } else if (animationId) {
-        cancelAnimationFrame(animationId);
-        animationId = null;
-    }
-}
-
-// Audio Analyzer
-function initializeAnalyzer() {
-    const fileInput = document.getElementById('file-input');
-    const uploadLabel = document.querySelector('label[for="file-input"]');
-    
-    // console.log('initializeAnalyzer called');
-    // console.log('fileInput:', fileInput);
-    // console.log('uploadLabel:', uploadLabel);
-    
-    if (uploadLabel) {
-        uploadLabel.addEventListener('click', (e) => {
-            // console.log('Upload button clicked!');
-            e.preventDefault();
-            fileInput.click();
-        });
-    }
-    
-    fileInput.addEventListener('change', async (e) => {
-        const file = e.target.files[0];
-        // console.log('File input changed. File:', file);
-        if (!file) {
-            // console.log('No file selected');
-            return;
-        }
-        
-        // console.log('=== FILE UPLOAD STARTED ===');
-        // console.log('File:', file.name, 'Type:', file.type, 'Size:', file.size);
-        
-        try {
-            // Show loading state IMMEDIATELY
-            const analysisResults = document.getElementById('analysis-results');
-            // console.log('analysis-results element:', analysisResults);
-            
-            if (!analysisResults) {
-                console.error('analysis-results element not found!');
-                showToast('error', 'Results container not found');
-                return;
-            }
-            
-            analysisResults.innerHTML = '<p style="padding: 40px; text-align: center; font-size: 2em; background: #ffeb3b; color: #000; border-radius: 8px; font-weight: bold;">🔄 LOADING FILE...</p>';
-            analysisResults.style.display = 'block';
-            // console.log('Loading message displayed');
-            
-            // console.log('File selected:', file.name, file.type, 'Size:', file.size, 'bytes');
-            
-            // Validate file size (max 100MB)
-            const maxSize = 100 * 1024 * 1024;
-            if (file.size > maxSize) {
-                throw new Error(`File is too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum size is 100MB.`);
-            }
-            
-            // console.log('Reading file as ArrayBuffer...');
-            const arrayBuffer = await file.arrayBuffer();
-            // console.log('ArrayBuffer created, size:', arrayBuffer.byteLength);
-            
-            // Update UI - starting decode
-            analysisResults.innerHTML = '<p style="padding: 40px; text-align: center; font-size: 2em; background: #e1bee7; color: #4a148c; border-radius: 8px; font-weight: bold;">🎵 DECODING AUDIO...</p>';
-            await new Promise(resolve => setTimeout(resolve, 100)); // Allow UI to update
-            
-            // Resume AudioContext if suspended (with timeout)
-            if (audioAnalyzer.audioContext.state === 'suspended') {
-                // console.log('AudioContext suspended, resuming...');
-                try {
-                    // Race resume() against a 2-second timeout
-                    await Promise.race([
-                        audioAnalyzer.audioContext.resume(),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('AudioContext resume timeout')), 2000))
-                    ]);
-                    // console.log('AudioContext resumed successfully');
-                } catch (resumeErr) {
-                    console.error('AudioContext resume failed or timed out:', resumeErr);
-                    // Safari fallback: try one more time
-                    if (audioAnalyzer.browserOptimizations.isSafari) {
-                        try {
-                            await audioAnalyzer.audioContext.resume();
-                        } catch (e2) {
-                            console.error('Safari resume retry failed:', e2);
-                        }
-                    }
-                    // Continue anyway - try to decode even if resume failed
-                }
-            }
-            // console.log('AudioContext state:', audioAnalyzer.audioContext.state);
-            
-            // Attempt to decode the audio with promise + callback fallback (better cross-browser support)
-            let audioBuffer;
-            try {
-                // console.log('=== STARTING AUDIO DECODE ===');
-                // console.log('File type:', file.type);
-                // console.log('File name:', file.name);
-                // console.log('ArrayBuffer size:', arrayBuffer.byteLength);
-                // console.log('About to call decodeAudioBuffer...');
-                
-                // Update UI before decode
-                analysisResults.innerHTML = '<p style="padding: 40px; text-align: center; font-size: 1.5em; background: #ffccbc; color: #bf360c; border-radius: 8px; font-weight: bold;">⏳ Calling decode function...</p>';
-                await new Promise(resolve => setTimeout(resolve, 200));
-                
-                // console.log('Calling decodeAudioBuffer NOW');
-                audioBuffer = await decodeAudioBuffer(arrayBuffer, file);
-                // console.log('decodeAudioBuffer returned!');
-                // console.log('=== DECODE SUCCESSFUL ===');
-                // console.log('Audio decoded successfully. Duration:', audioBuffer.duration, 'seconds');
-                // console.log('Sample rate:', audioBuffer.sampleRate);
-                // console.log('Channels:', audioBuffer.numberOfChannels);
-            } catch (decodeError) {
-                console.error('Decode error:', decodeError);
-                console.error('Error name:', decodeError.name);
-                console.error('Error message:', decodeError.message);
-                
-                // Provide specific error messages for different formats
-                if (file.type === 'audio/mpeg' || file.name.toLowerCase().endsWith('.mp3')) {
-                    throw new Error('MP3 format detected. MP3 has limited browser support. Please convert to WAV, OGG, or FLAC format.');
-                } else if (file.type === 'audio/x-m4a' || file.type === 'audio/mp4' || file.name.toLowerCase().endsWith('.m4a')) {
-                    throw new Error('M4A format detected. Try converting to WAV or OGG format for better compatibility.');
-                } else if (file.name.toLowerCase().endsWith('.wav')) {
-                    throw new Error(`WAV file decode failed: ${decodeError.message}. The file may be corrupted or use an unsupported WAV encoding (e.g., ADPCM). Try exporting as PCM 16-bit WAV.`);
-                } else {
-                    throw new Error(`Unable to decode audio (${file.type || 'unknown type'}): ${decodeError.message}`);
-                }
-            }
-            
-            // console.log('=== DECODE COMPLETE - STARTING ANALYSIS ===');
-            analysisResults.innerHTML = '<p style="padding: 40px; text-align: center; font-size: 2em; background: #c8e6c9; color: #1b5e20; border-radius: 8px; font-weight: bold;">✅ STARTING ANALYSIS...</p>';
-            await new Promise(resolve => setTimeout(resolve, 100));
-        
-        // Create audio player for the uploaded file
-        const audioUrl = URL.createObjectURL(file);
-        const audioPlayer = document.createElement('audio');
-        audioPlayer.controls = true;
-        audioPlayer.src = audioUrl;
-        audioPlayer.style.width = '100%';
-        audioPlayer.style.marginBottom = '20px';
-        
-        // console.log('Calling analyzeAudioFile...');
-        await analyzeAudioFile(audioBuffer, file.name, audioPlayer);
-        } catch (error) {
-            console.error('Analysis error:', error);
-            const analysisResults = document.getElementById('analysis-results');
-            analysisResults.innerHTML = `
-                <div style="padding: 20px; background: #ffebee; border-radius: 8px; border-left: 4px solid #f44336;">
-                    <h4 style="color: #c62828; margin-top: 0;">❌ Analysis Failed</h4>
-                    <p style="color: #d32f2f; margin: 10px 0;"><strong>Error:</strong> ${error.message}</p>
-                    <div style="background: white; padding: 15px; border-radius: 4px; margin-top: 15px; font-size: 0.9em;">
-                        <p style="margin-top: 0;"><strong>💡 Supported Formats & Solutions:</strong></p>
-                        <ul style="margin: 10px 0; padding-left: 20px; line-height: 1.6;">
-                            <li><strong>✅ Best formats:</strong> WAV, OGG, FLAC</li>
-                            <li><strong>⚠️ Limited support:</strong> MP3, M4A (depends on browser)</li>
-                            <li><strong>Converting MP3 to WAV:</strong>
-                                <div style="background: #f5f5f5; padding: 8px 12px; border-radius: 4px; margin-top: 5px; font-family: monospace; font-size: 0.85em; overflow-x: auto;">
-                                    ffmpeg -i file.mp3 file.wav
-                                </div>
-                            </li>
-                            <li>Ensure the file is a valid audio file</li>
-                            <li>Try a shorter audio clip (under 5 minutes)</li>
-                            <li>Check that the file is not corrupted</li>
-                        </ul>
-                    </div>
-                </div>
-            `;
-            analysisResults.style.display = 'block';
-        }
-    });
-}
-
-// Store chart instances globally for download
-let pitchChart = null;
-let rhythmChart = null;
-let spectralChart = null;
-let currentAnalysisData = null;
-
-// Robust decode helper (supports promise and callback forms)
-async function decodeAudioBuffer(arrayBuffer, file) {
-    // console.log('decodeAudioBuffer called');
-    // console.log('ArrayBuffer size:', arrayBuffer.byteLength);
-    // console.log('File type:', file.type);
-    // console.log('File name:', file.name);
-    
-    // Check if file is actually an audio file by looking at the header
-    const view = new Uint8Array(arrayBuffer, 0, 12);
-    // console.log('File header (first 12 bytes):', Array.from(view).map(b => b.toString(16).padStart(2, '0')).join(' '));
-    
-    // Create a COPY of the ArrayBuffer because decodeAudioData consumes it
-    const bufferCopy = arrayBuffer.slice(0);
-    // console.log('Created buffer copy, size:', bufferCopy.byteLength);
-    
-    // Create a timeout promise
-    const timeout = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Audio decode timeout after 5 seconds')), 5000)
-    );
-    
-    // Try promise-based decode first
-    const decodePromise = new Promise(async (resolve, reject) => {
-        try {
-            // console.log('Trying promise-based decodeAudioData...');
-            const decoded = await audioAnalyzer.audioContext.decodeAudioData(bufferCopy);
-            // console.log('Promise-based decode succeeded');
-            resolve(decoded);
-        } catch (promiseErr) {
-            // console.log('Promise-based decode failed:', promiseErr.message);
-            reject(promiseErr);
-        }
-    });
-    
-    // Race between decode and timeout
-    return Promise.race([decodePromise, timeout]);
-}
-
-async function analyzeAudioFile(audioBuffer, filename = 'audio-file', audioPlayer = null) {
-    const analysisResults = document.getElementById('analysis-results');
-    const cancelBtn = document.getElementById('cancel-analysis');
-    try {
-        // console.log('analyzeAudioFile called');
-        // New run: reset any cross-run analyzer state and stamp a runId
-        const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        if (audioAnalyzer) {
-            audioAnalyzer.previousSpectrum = null;
-        }
-        // Prepare cancel handling
-        analysisCancelled = false;
-        let onCancel;
-        if (cancelBtn) {
-            cancelBtn.style.display = 'inline-block';
-            onCancel = () => { analysisCancelled = true; };
-            cancelBtn.addEventListener('click', onCancel, { once: true });
-        }
-        analysisResults.innerHTML = '<p style="padding: 20px; text-align: center; font-size: 1.1em;"><strong>📊 Processing audio...</strong></p>';
-        analysisResults.style.display = 'block';
-        
-        // Get audio data (limit to first 15 seconds to keep UI responsive)
-        // console.log('Getting channel data...');
-        const channelData = audioBuffer.getChannelData(0);
-        const sampleRate = audioBuffer.sampleRate;
-        const maxDurationSec = 15;
-        const trimmedSamples = Math.min(channelData.length, Math.floor(sampleRate * maxDurationSec));
-        const trimmedChannel = channelData.slice(0, trimmedSamples);
-        const usingEssentia = audioAnalyzer?.essentiaReady === true;
-        // console.log('Channel data ready: length', trimmedChannel.length, 'at', sampleRate, 'Hz');
-        
-        // Update UI with progress
-        analysisResults.innerHTML = '<p style="padding: 40px; text-align: center; font-size: 1.8em; background: #fff3e0; color: #e65100; border-radius: 8px;"><strong>🎵 Analyzing rhythm...</strong></p>';
-        await new Promise(resolve => setTimeout(resolve, 500)); // Allow UI to update
-        
-        // Analyze rhythm
-        if (analysisCancelled) throw new Error('Analysis cancelled');
-        // console.log('Analyzing rhythm...');
-        const rhythmAnalysis = audioAnalyzer.analyzeRhythm(trimmedChannel, sampleRate);
-        
-        // Enhanced rhythm analysis with temporal features
-        const temporalFeatures = audioAnalyzer.calculateTemporalFeatures(rhythmAnalysis.intervals || []);
-        const polyrhythm = audioAnalyzer.detectPolyrhythm(rhythmAnalysis.intervals || []);
-        const zcr = audioAnalyzer.calculateZCR(trimmedChannel);
-        
-        rhythmAnalysis.temporalComplexity = temporalFeatures.complexity;
-        rhythmAnalysis.entropy = temporalFeatures.entropy;
-        rhythmAnalysis.polyrhythmic = polyrhythm.isPolyrhythmic;
-        rhythmAnalysis.polyrhythmRatio = polyrhythm.ratio;
-        rhythmAnalysis.percussiveness = zcr; // Higher ZCR indicates more percussive content
-        
-        // console.log('✓ Rhythm analysis complete:', rhythmAnalysis.tempo, 'BPM');
-        // console.log('Rhythm regularity:', rhythmAnalysis.regularity);
-        // console.log('Temporal complexity:', temporalFeatures.complexity.toFixed(3));
-        // console.log('Polyrhythmic:', polyrhythm.isPolyrhythmic);
-        await new Promise(resolve => setTimeout(resolve, 500)); // Allow UI to update
-        
-        // Analyze pitch (more samples for better accuracy)
-        if (analysisCancelled) throw new Error('Analysis cancelled');
-        analysisResults.innerHTML = '<p style="padding: 40px; text-align: center; font-size: 1.8em; background: #f3e5f5; color: #6a1b9a; border-radius: 8px;"><strong>🎸 Analyzing pitch...</strong></p>';
-        await new Promise(resolve => setTimeout(resolve, 500)); // Allow UI to update
-        // console.log('Analyzing pitch...');
-        const pitches = [];
-        const timestamps = [];
-        const sampleSize = 4096;
-        let frames = 0;
-        const maxFrames = 20; // Drastically reduced to prevent freeze
-        // console.log('Starting pitch detection, max frames:', maxFrames);
-        for (let i = 0; i < trimmedChannel.length - sampleSize; i += sampleSize * 64) {
-            if (analysisCancelled) throw new Error('Analysis cancelled');
-            const sample = trimmedChannel.slice(i, i + sampleSize);
-            const pitch = usingEssentia ? audioAnalyzer.detectPitchEssentia(sample) : audioAnalyzer.detectPitch(sample);
-            if (pitch > 0 && pitch < 2000) { // Filter out noise
-                pitches.push(pitch);
-                timestamps.push(i / sampleRate);
-            }
-            frames++;
-            
-            // Yield to browser every 5 frames
-            if (frames % 5 === 0) {
-                await new Promise(resolve => setTimeout(resolve, 0));
-            }
-            
-            if (frames >= maxFrames) break;
-        }
-        // console.log('✓ Pitch analysis complete. Found', pitches.length, 'pitches');
-        await new Promise(resolve => setTimeout(resolve, 500)); // Allow UI to update
-        
-        // Spectral analysis
-        if (analysisCancelled) throw new Error('Analysis cancelled');
-        analysisResults.innerHTML = '<p style="padding: 40px; text-align: center; font-size: 1.8em; background: #e8f5e9; color: #2e7d32; border-radius: 8px;"><strong>📈 Analyzing spectrum...</strong></p>';
-        await new Promise(resolve => setTimeout(resolve, 500)); // Allow UI to update
-        // console.log('Analyzing spectrum...');
-        // console.log('Calling analyzeSpectrum with', trimmedChannel.length, 'samples at', sampleRate, 'Hz');
-        const spectralAnalysis = analyzeSpectrum(trimmedChannel, sampleRate);
-        const keyAnalysis = usingEssentia ? audioAnalyzer.detectKeyEssentia(trimmedChannel) : null;
-        // Feature flag: ML-assisted genre via Essentia MFCCs (enable with ?mlGenre=1)
-        const mlGenreEnabled = (() => {
-            try { return new URLSearchParams(window.location.search).get('mlGenre') === '1'; } catch { return false; }
-        })();
-        const mlWeightParam = (() => {
-            try {
-                const v = new URLSearchParams(window.location.search).get('mlWeight');
-                const n = Number(v);
-                return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : null;
-            } catch { return null; }
-        })();
-        // Feature flag: rule tuning profile (?tuning=experimental|stable)
-        const tuningParam = (() => {
-            try {
-                const v = new URLSearchParams(window.location.search).get('tuning');
-                return v === 'experimental' ? 'experimental' : 'stable';
-            } catch { return 'stable'; }
-        })();
-        let mlFeatures = null;
-        if (mlGenreEnabled && usingEssentia && typeof audioAnalyzer.extractMFCCFeatures === 'function') {
-            try {
-                mlFeatures = audioAnalyzer.extractMFCCFeatures(trimmedChannel, sampleRate);
-            } catch (e) {
-                console.warn('MFCC extraction error:', e?.message || e);
-            }
-        }
-        const engineLabel = usingEssentia ? `Essentia.js (WASM)${mlGenreEnabled && mlFeatures ? ' + ML-assisted genres' : ''}` : 'Basic analyzer';
-        // console.log('✓ Spectral analysis complete');
-        // console.log('Centroid:', spectralAnalysis.centroid, 'Brightness:', spectralAnalysis.brightness);
-
-        // Restore proper HTML structure for charts
-        analysisResults.innerHTML = `
-            <div style="margin: 0 0 12px; padding: 10px 12px; background: #eef2ff; border-radius: 6px; border-left: 4px solid #667eea;">
-                <strong>Analysis engine:</strong> ${engineLabel}${usingEssentia ? ' (accelerated)' : ' (fallback)'}
-            </div>
-            ${audioPlayer ? '<div style="margin: 0 0 20px; padding: 15px; background: #e3f2fd; border-radius: 8px; border-left: 4px solid #2196f3;"><h4 style="margin: 0 0 10px; color: #1565c0;">🔊 Audio Playback</h4>' + audioPlayer.outerHTML + '</div>' : ''}
-            <div class="analysis-grid">
-                <div class="analysis-card">
-                    <h3>Pitch Analysis</h3>
-                    <canvas id="pitch-chart" width="400" height="300"></canvas>
-                    <div id="pitch-info"></div>
-                </div>
-                
-                <div class="analysis-card">
-                    <h3>Rhythm Analysis</h3>
-                    <canvas id="rhythm-chart" width="400" height="300"></canvas>
-                    <div id="rhythm-info"></div>
-                </div>
-                
-                <div class="analysis-card">
-                    <h3>Spectral Features</h3>
-                    <canvas id="spectral-chart" width="400" height="300"></canvas>
-                    <div id="spectral-info"></div>
-                </div>
-                
-                <div class="analysis-card">
-                    <h3>Cultural Insights</h3>
-                    <div id="cultural-insights"></div>
-                </div>
-            </div>
-        `;
-        
-        // Store full analysis data
-        currentAnalysisData = {
-            filename: filename,
-            duration: audioBuffer.duration,
-            sampleRate: sampleRate,
-            engine: usingEssentia ? 'essentia' : 'basic',
-            key: keyAnalysis,
-            engineLabel,
-            rhythm: rhythmAnalysis,
-            pitches: pitches,
-            timestamps: timestamps,
-            spectral: spectralAnalysis,
-            analyzedAt: new Date().toISOString(),
-            runId,
-            ml: mlFeatures ? { enabled: mlGenreEnabled, features: mlFeatures } : { enabled: false }
-        };
-        
-        displayPitchAnalysis(pitches, timestamps);
-        displayRhythmAnalysis(rhythmAnalysis);
-        displaySpectralAnalysis(spectralAnalysis);
-        
-        // Identify scale
-        const scaleAnalysis = audioAnalyzer.identifyScale(pitches);
-        
-        // Extract Essentia features for ML and classification
-        const essentiaFeatures = audioAnalyzer.extractEssentiaFeatures(audioBuffer);
-        
-        // Genre classification (optionally ML-assisted, now with Essentia features)
-        const genreResults = await audioAnalyzer.classifyGenre(
-            rhythmAnalysis,
-            scaleAnalysis,
-            spectralAnalysis,
-            essentiaFeatures,
-            { mlWeight: mlWeightParam ?? 0.25, tuning: tuningParam, runId }
-        );
-        
-        // Store genre in analysis data
-        currentAnalysisData.genre = genreResults;
-        
-        // Display musical characteristics (not cultural matching)
-        displayMusicalInsights(rhythmAnalysis, scaleAnalysis, spectralAnalysis, keyAnalysis, engineLabel, genreResults);
-        
-        // Add download functionality
-        setupDownloadButtons();
-        // console.log('Analysis completed successfully');
-        if (cancelBtn) cancelBtn.style.display = 'none';
-    } catch (error) {
-        console.error('Analysis error:', error);
-        if (cancelBtn) cancelBtn.style.display = 'none';
-        analysisResults.innerHTML = `
-            <div style="padding: 20px; background: #ffebee; border-radius: 8px; border-left: 4px solid #f44336;">
-                <h4 style="color: #c62828; margin-top: 0;">❌ Analysis Failed</h4>
-                <p style="color: #d32f2f; margin: 10px 0;"><strong>Error:</strong> ${error.message}</p>
-                <p style="margin: 0; font-size: 0.9em;">Check the console for details and try another WAV/OGG/FLAC file.</p>
-            </div>
-        `;
-        analysisResults.style.display = 'block';
-    }
-}
-
-function displayPitchAnalysis(pitches, timestamps) {
-    const chartElement = document.getElementById('pitch-chart');
-    const pitchInfo = document.getElementById('pitch-info');
-    
-    if (!chartElement) {
-        console.error('pitch-chart element not found');
-        return;
-    }
-    
-    const ctx = chartElement.getContext('2d');
-    
-    // Destroy existing chart
-    if (pitchChart) pitchChart.destroy();
-    
-    // Convert to MIDI notes and count occurrences
-    const midiNotes = pitches.map(p => audioAnalyzer.frequencyToMidiNote(p));
-    const histogram = {};
-    midiNotes.forEach(note => {
-        histogram[note] = (histogram[note] || 0) + 1;
-    });
-    
-    const sortedNotes = Object.entries(histogram)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 12);
-    
-    pitchChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: sortedNotes.map(([note]) => audioAnalyzer.midiToNoteName(parseInt(note))),
-            datasets: [{
-                label: 'Note Frequency Distribution',
-                data: sortedNotes.map(([, count]) => count),
-                backgroundColor: 'rgba(102, 126, 234, 0.6)',
-                borderColor: 'rgba(102, 126, 234, 1)',
-                borderWidth: 2
-            }]
-        },
-        options: {
-            responsive: true,
-            plugins: {
-                legend: { display: true },
-                title: {
-                    display: true,
-                    text: 'Pitch Distribution (Most Common Notes)'
-                }
-            },
-            scales: {
-                y: { 
-                    beginAtZero: true,
-                    title: { display: true, text: 'Occurrences' }
-                },
-                x: {
-                    title: { display: true, text: 'Musical Notes' }
-                }
-            }
-        }
-    });
-    
-    const avgPitch = pitches.reduce((a, b) => a + b, 0) / pitches.length;
-    const avgNote = audioAnalyzer.midiToNoteName(audioAnalyzer.frequencyToMidiNote(avgPitch));
-    const pitchStdDev = Math.sqrt(pitches.reduce((sum, p) => sum + Math.pow(p - avgPitch, 2), 0) / pitches.length);
-    
-    pitchInfo.innerHTML = `
-        <p><strong>Average Pitch:</strong> ${avgPitch.toFixed(2)} Hz (${avgNote})</p>
-        <p><strong>Pitch Range:</strong> ${Math.min(...pitches).toFixed(2)} - ${Math.max(...pitches).toFixed(2)} Hz</p>
-        <p><strong>Most Common Note:</strong> ${sortedNotes[0] ? audioAnalyzer.midiToNoteName(parseInt(sortedNotes[0][0])) : 'N/A'}</p>
-        <p><strong>Pitch Variation:</strong> ${pitchStdDev.toFixed(2)} Hz (${pitchStdDev > 50 ? 'High' : pitchStdDev > 20 ? 'Moderate' : 'Low'} variability)</p>
-        <p><strong>Total Pitches Detected:</strong> ${pitches.length}</p>
-        <p><strong>Engine:</strong> ${currentAnalysisData?.engine === 'essentia' ? 'Essentia.js (WASM)' : 'Basic analyzer'}</p>
-    `;
-}
-
-function displayRhythmAnalysis(rhythmAnalysis) {
-    const chartElement = document.getElementById('rhythm-chart');
-    const rhythmInfo = document.getElementById('rhythm-info');
-    
-    if (!chartElement) {
-        console.error('rhythm-chart element not found');
-        return;
-    }
-    
-    const ctx = chartElement.getContext('2d');
-    
-    // Destroy existing chart
-    if (rhythmChart) rhythmChart.destroy();
-    
-    rhythmChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: rhythmAnalysis.intervals.slice(0, 30).map((_, i) => `${i + 1}`),
-            datasets: [{
-                label: 'Inter-onset Intervals (ms)',
-                data: rhythmAnalysis.intervals.slice(0, 30),
-                borderColor: 'rgba(118, 75, 162, 1)',
-                backgroundColor: 'rgba(118, 75, 162, 0.2)',
-                tension: 0.4,
-                fill: true
-            }]
-        },
-        options: {
-            responsive: true,
-            plugins: {
-                legend: { display: true },
-                title: {
-                    display: true,
-                    text: 'Rhythm Pattern (First 30 Beats)'
-                }
-            },
-            scales: {
-                y: {
-                    title: { display: true, text: 'Interval Duration (ms)' }
-                },
-                x: {
-                    title: { display: true, text: 'Beat Number' }
-                }
-            }
-        }
-    });
-    
-    const avgInterval = rhythmAnalysis.intervals.reduce((a, b) => a + b, 0) / rhythmAnalysis.intervals.length;
-    const timeSignature = rhythmAnalysis.tempo > 150 ? '2/4 or 6/8' : rhythmAnalysis.tempo > 100 ? '4/4' : '3/4 or 6/8';
-    
-    // Enhanced rhythm information with ML features
-    const complexityLabel = rhythmAnalysis.temporalComplexity > 0.7 ? 'Very Complex' :
-                           rhythmAnalysis.temporalComplexity > 0.5 ? 'Complex' :
-                           rhythmAnalysis.temporalComplexity > 0.3 ? 'Moderate' : 'Simple';
-    
-    const percussivenessLabel = rhythmAnalysis.percussiveness > 0.15 ? 'Highly Percussive' :
-                                rhythmAnalysis.percussiveness > 0.08 ? 'Moderately Percussive' : 'Melodic';
-    
-    rhythmInfo.innerHTML = `
-        <p><strong>Estimated Tempo:</strong> ${rhythmAnalysis.tempo} BPM</p>
-        <p><strong>Rhythm Regularity:</strong> ${(rhythmAnalysis.regularity * 100).toFixed(1)}% (${rhythmAnalysis.regularity > 0.8 ? 'Very Regular' : rhythmAnalysis.regularity > 0.6 ? 'Moderate' : 'Irregular'})</p>
-        <p><strong>Detected Beats:</strong> ${rhythmAnalysis.peakCount}</p>
-        <p><strong>Average Beat Interval:</strong> ${avgInterval.toFixed(2)} ms</p>
-        <p><strong>Likely Time Signature:</strong> ${timeSignature}</p>
-        <p><strong>Rhythmic Complexity:</strong> ${complexityLabel} (${(rhythmAnalysis.temporalComplexity * 100).toFixed(1)}%)</p>
-        ${rhythmAnalysis.polyrhythmic ? `<p><strong>⚡ Polyrhythmic Pattern Detected:</strong> ${rhythmAnalysis.polyrhythmRatio}</p>` : ''}
-        <p><strong>Percussiveness:</strong> ${percussivenessLabel} (ZCR: ${(rhythmAnalysis.percussiveness * 100).toFixed(2)}%)</p>
-        <p style="margin-top: 10px; padding: 10px; background: #f5f5f5; border-radius: 4px; font-size: 0.9em;">
-            <strong>Analysis:</strong> ${rhythmAnalysis.regularity > 0.7 ? 'Steady, metronomic rhythm suitable for dance or marching.' : rhythmAnalysis.polyrhythmic ? 'Complex polyrhythmic structure common in West African and Latin American music.' : 'Irregular rhythm pattern, possibly rubato or free-time performance.'}
-        </p>
-    `;
-}
-
-function displayMusicalInsights(rhythmAnalysis, scaleAnalysis, spectralAnalysis, keyAnalysis = null, engineLabel = 'Basic analyzer', genreResults = []) {
-    const insightsDiv = document.getElementById('cultural-insights');
-    
-    // Determine musical characteristics without cultural presumptions
-    const tempoCategory = rhythmAnalysis.tempo < 60 ? 'Very Slow (Grave/Largo)' :
-                         rhythmAnalysis.tempo < 80 ? 'Slow (Adagio/Andante)' :
-                         rhythmAnalysis.tempo < 108 ? 'Moderate (Moderato)' :
-                         rhythmAnalysis.tempo < 140 ? 'Fast (Allegro)' : 'Very Fast (Presto)';
-    
-    const timbreCategory = spectralAnalysis.brightness > 0.6 ? 'Bright/Shimmering' :
-                          spectralAnalysis.brightness > 0.4 ? 'Balanced' : 'Dark/Warm';
-    
-    const rhythmicCharacter = rhythmAnalysis.polyrhythmic ? 'Polyrhythmic (Multiple simultaneous patterns)' :
-                             rhythmAnalysis.regularity > 0.8 ? 'Steady/Metronomic' :
-                             rhythmAnalysis.regularity > 0.5 ? 'Moderately Regular' : 'Fluid/Rubato';
-    
-    // Scale family information
-    const scaleFamily = scaleAnalysis.scale.includes('Pentatonic') ? 'Pentatonic (5-note scales)' :
-                       scaleAnalysis.scale.includes('Major') || scaleAnalysis.scale.includes('Minor') ? 'Diatonic (7-note scales)' :
-                       scaleAnalysis.scale.includes('Blues') ? 'Blues-influenced' :
-                       scaleAnalysis.scale.includes('Chromatic') ? 'Chromatic (12-tone)' :
-                       scaleAnalysis.scale.includes('Whole Tone') ? 'Whole Tone (6-note symmetrical)' : 'Modal';
-    
-    // Advanced musical analysis
-    const energyLevel = spectralAnalysis.rolloff > 3000 ? 'High Energy' : 
-                       spectralAnalysis.rolloff > 1500 ? 'Moderate Energy' : 'Low Energy';
-    
-    const texturalDensity = spectralAnalysis.brightness > 0.5 && rhythmAnalysis.percussiveness > 0.1 ? 'Dense/Complex' :
-                           spectralAnalysis.brightness < 0.3 && rhythmAnalysis.percussiveness < 0.08 ? 'Sparse/Minimal' : 'Moderate';
-    
-    // Musical form suggestions
-    const suggestedUses = getSuggestedMusicalUses(rhythmAnalysis, scaleAnalysis, spectralAnalysis);
-    
-    insightsDiv.innerHTML = `
-        
-        ${genreResults.length > 0 ? `
-        <div style="margin-bottom: 20px; padding: 15px; background: #fce4ec; border-radius: 8px; border-left: 4px solid #e91e63;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                <h4 style="margin: 0;">🎸 Genre Classification</h4>
-                <button id="toggle-genre-details" class="btn-secondary" style="padding: 6px 12px; font-size: 0.85em;">📋 Show Details</button>
-            </div>
-            <div id="genre-details" style="display: none; margin-bottom: 15px; padding: 12px; background: rgba(0,0,0,0.05); border-radius: 6px; font-size: 0.85em; font-family: monospace; color: #333;">
-                ${genreResults.__debug ? `
-                    <div style="margin-bottom: 8px;">
-                        <strong>Input Features:</strong><br>
-                        Tempo: ${genreResults.__debug.input.tempo.toFixed(1)} BPM | 
-                        Regularity: ${(genreResults.__debug.input.regularity * 100).toFixed(1)}% | 
-                        Brightness: ${(genreResults.__debug.input.brightness * 100).toFixed(1)}%<br>
-                        Percussiveness: ${(genreResults.__debug.input.percussiveness * 100).toFixed(1)}% | 
-                        Complexity: ${(genreResults.__debug.input.complexity * 100).toFixed(1)}%
-                    </div>
-                    <div>
-                        <strong>Raw Scores:</strong><br>
-                        ${Object.entries(genreResults.__debug.rawScores)
-                            .sort((a, b) => b[1] - a[1])
-                            .map(([g, s]) => g + ': ' + (s >= 0 ? '+' : '') + s.toFixed(3))
-                            .join(' | ')}
-                    </div>
-                ` : '<em>Debug info unavailable</em>'}
-            </div>
-            <p style="margin: 0 0 12px; font-size: 0.9em; color: #880e4f;">
-                Based on tempo, rhythm patterns, scale structure, and spectral characteristics:
-            </p>
-            <div style="display: flex; flex-direction: column; gap: 8px;">
-                ${genreResults.map((g, i) => `
-                    <div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: white; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-                        <span style="font-size: 1.3em; min-width: 30px;">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '🎵'}</span>
-                        <div style="flex: 1;">
-                            <strong style="font-size: 1.05em; color: #c2185b;">${g.genre}</strong>
-                            <div style="margin-top: 4px; height: 6px; background: #f5f5f5; border-radius: 3px; overflow: hidden;">
-                                <div style="height: 100%; background: linear-gradient(90deg, #e91e63, #f06292); width: ${g.confidence}%; transition: width 0.3s;"></div>
-                            </div>
-                        </div>
-                        <span style="font-weight: bold; color: #c2185b; min-width: 45px; text-align: right;">${g.confidence}%</span>
-                    </div>
-                `).join('')}
-            </div>
-            <p style="margin: 12px 0 0; font-size: 0.85em; color: #666;">
-                💡 <strong>Note:</strong> Genre detection uses musical features—results are suggestions, not definitive classifications.
-            </p>
-        </div>
-        <script>
-            (function() {
-                // Ensure elements are available before binding
-                let retries = 0;
-                const maxRetries = 50; // Up to 5 seconds
-                
-                function setupToggle() {
-                    const btn = document.getElementById('toggle-genre-details');
-                    const details = document.getElementById('genre-details');
-                    
-                    if (btn && details) {
-                        console.log('[Genre Details] Button and container found, binding event');
-                        btn.addEventListener('click', (e) => {
-                            e.stopPropagation();
-                            const isHidden = details.style.display === 'none';
-                            details.style.display = isHidden ? 'block' : 'none';
-                            btn.textContent = isHidden ? '📋 Hide Details' : '📋 Show Details';
-                            console.log('[Genre Details] Toggled:', isHidden ? 'showing' : 'hiding');
-                        });
-                    } else {
-                        retries++;
-                        if (retries < maxRetries) {
-                            setTimeout(setupToggle, 100);
-                        } else {
-                            console.warn('[Genre Details] Could not find button or container after retries');
-                        }
-                    }
-                }
-                
-                // Start immediately and in next microtask
-                setTimeout(setupToggle, 0);
-            })();
-        </script>
-        ` : ''}
-        
-        <div style="margin-bottom: 20px; padding: 15px; background: #f0f4ff; border-radius: 8px; border-left: 4px solid #667eea;">
-            <h4 style="margin-top: 0;">🎼 Musical Scale & Tonality</h4>
-            <p><strong style="font-size: 1.3em; color: #667eea;">${scaleAnalysis.scale}</strong></p>
-            <p style="margin: 5px 0; font-size: 0.9em;">
-                <strong>Detection Confidence:</strong> ${(scaleAnalysis.confidence * 100).toFixed(1)}% 
-                ${scaleAnalysis.confidence > 0.7 ? '✓ High Confidence' : scaleAnalysis.confidence > 0.4 ? '~ Moderate Confidence' : '? Low Confidence - Ambiguous Tonality'}
-            </p>
-            <p style="margin: 5px 0; font-size: 0.9em;">
-                <strong>Scale Family:</strong> ${scaleFamily}
-            </p>
-            <p style="margin: 5px 0; font-size: 0.9em;">
-                <strong>Estimated Key (Essentia):</strong> ${keyAnalysis ? `${keyAnalysis.key} ${keyAnalysis.scale} (${(keyAnalysis.confidence * 100).toFixed(1)}% confidence)` : 'Not available (basic engine)'}
-            </p>
-            <p style="margin: 5px 0; font-size: 0.9em;">
-                <strong>Analysis Engine:</strong> ${engineLabel}
-            </p>
-        </div>
-        
-        <h4>🎵 Comprehensive Musical Analysis</h4>
-        
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-top: 15px;">
-            <div style="padding: 15px; background: #fff3e0; border-radius: 8px; border-left: 4px solid #ff9800;">
-                <h5 style="margin: 0 0 10px 0; color: #e65100;">⏱️ Tempo & Rhythm</h5>
-                <p style="margin: 5px 0; font-size: 0.9em;"><strong>Tempo:</strong> ${rhythmAnalysis.tempo} BPM</p>
-                <p style="margin: 5px 0; font-size: 0.9em;"><strong>Category:</strong> ${tempoCategory}</p>
-                <p style="margin: 5px 0; font-size: 0.9em;"><strong>Character:</strong> ${rhythmicCharacter}</p>
-                <p style="margin: 5px 0; font-size: 0.9em;"><strong>Regularity:</strong> ${(rhythmAnalysis.regularity * 100).toFixed(0)}%</p>
-                ${rhythmAnalysis.polyrhythmic ? `<p style="margin: 5px 0; font-size: 0.9em; color: #d84315;"><strong>⚡ Polyrhythm:</strong> ${rhythmAnalysis.polyrhythmRatio}</p>` : ''}
-            </div>
-            
-            <div style="padding: 15px; background: #f3e5f5; border-radius: 8px; border-left: 4px solid #9c27b0;">
-                <h5 style="margin: 0 0 10px 0; color: #6a1b9a;">🎨 Timbre & Texture</h5>
-                <p style="margin: 5px 0; font-size: 0.9em;"><strong>Timbral Quality:</strong> ${timbreCategory}</p>
-                <p style="margin: 5px 0; font-size: 0.9em;"><strong>Brightness:</strong> ${(spectralAnalysis.brightness * 100).toFixed(0)}%</p>
-                <p style="margin: 5px 0; font-size: 0.9em;"><strong>Spectral Centroid:</strong> ${spectralAnalysis.centroid.toFixed(0)} Hz</p>
-                <p style="margin: 5px 0; font-size: 0.9em;"><strong>Energy Distribution:</strong> ${energyLevel}</p>
-                <p style="margin: 5px 0; font-size: 0.9em;"><strong>Texture:</strong> ${texturalDensity}</p>
-            </div>
-            
-            <div style="padding: 15px; background: #e8f5e9; border-radius: 8px; border-left: 4px solid #4caf50;">
-                <h5 style="margin: 0 0 10px 0; color: #2e7d32;">🔊 Percussive Analysis</h5>
-                <p style="margin: 5px 0; font-size: 0.9em;"><strong>Percussiveness:</strong> ${(rhythmAnalysis.percussiveness * 100).toFixed(1)}%</p>
-                <p style="margin: 5px 0; font-size: 0.9em;"><strong>Character:</strong> ${rhythmAnalysis.percussiveness > 0.15 ? 'Highly Percussive' : rhythmAnalysis.percussiveness > 0.08 ? 'Moderately Percussive' : 'Melodic/Sustained'}</p>
-                <p style="margin: 5px 0; font-size: 0.9em;"><strong>Rhythmic Complexity:</strong> ${(rhythmAnalysis.temporalComplexity * 100).toFixed(0)}%</p>
-                <p style="margin: 5px 0; font-size: 0.9em;"><strong>Beat Count:</strong> ${rhythmAnalysis.peakCount} onsets</p>
-            </div>
-        </div>
-        
-        <div style="margin-top: 20px; padding: 15px; background: #fff9e6; border-radius: 8px; border-left: 4px solid #ffc107;">
-            <h4 style="margin-top: 0;">📚 About This Scale</h4>
-            ${getScaleDescription(scaleAnalysis.scale)}
-        </div>
-        
-        <div style="margin-top: 20px; padding: 15px; background: #e1f5fe; border-radius: 8px; border-left: 4px solid #03a9f4;">
-            <h4 style="margin-top: 0;">🎭 Musical Context & Applications</h4>
-            ${suggestedUses}
-        </div>
-        
-        <div style="margin-top: 20px; padding: 12px; background: #f5f5f5; border-radius: 8px; font-size: 0.9em; color: #666;">
-            <p style="margin: 0;"><strong>💡 Interpretation Note:</strong> This analysis identifies theoretical musical structures (scales, rhythmic patterns, timbral qualities) and shows cultures with similar characteristics. Musical elements transcend borders and appear in diverse global traditions. Use this as a starting point for deeper exploration.</p>
-        </div>
-    `;
-}
-
-function getSuggestedMusicalUses(rhythmAnalysis, scaleAnalysis, spectralAnalysis) {
-    let suggestions = [];
-    
-    const tempo = rhythmAnalysis.tempo;
-    const scale = scaleAnalysis.scale;
-    const brightness = spectralAnalysis.brightness;
-    const regularity = rhythmAnalysis.regularity;
-    const percussiveness = rhythmAnalysis.percussiveness;
-    
-    // Scale-based genre contexts
-    if (scale.includes('Pentatonic')) {
-        suggestions.push('<strong>Pentatonic Traditions:</strong> Found across world music (East Asian, African, indigenous cultures), blues, and folk traditions');
-    }
-    if (scale.includes('Dorian') || scale.includes('Phrygian') || scale.includes('Mixolydian')) {
-        suggestions.push('<strong>Modal Scales:</strong> Common in jazz improvisation, European folk music, and classical traditions');
-    }
-    if (scale.includes('Blues')) {
-        suggestions.push('<strong>Blues Tonality:</strong> Characteristic of blues, jazz, rock, and R&B genres');
-    }
-    if (scale.includes('Minor')) {
-        suggestions.push('<strong>Minor Tonality:</strong> Appears across many genres including classical, rock, and popular music');
-    }
-    
-    // Tempo-based context
-    if (tempo < 80) {
-        suggestions.push('<strong>Slow Tempo:</strong> Suitable for meditative, classical, or intimate vocal contexts');
-    } else if (tempo >= 80 && tempo < 120) {
-        suggestions.push('<strong>Moderate Tempo:</strong> Common in reggae, folk, country, and many world music traditions');
-    } else if (tempo >= 120 && tempo < 160) {
-        suggestions.push('<strong>Brisk Tempo:</strong> Typical for dance, rock, pop, and energetic folk traditions');
-    } else {
-        suggestions.push('<strong>Fast Tempo:</strong> Characteristic of uptempo dance, metal, hip-hop, and virtuosic classical works');
-    }
-    
-    // Regularity-based context
-    if (regularity > 0.8) {
-        suggestions.push('<strong>High Regularity:</strong> Indicates structured, beat-driven music (electronic, dance, pop)');
-    } else if (regularity >= 0.5 && regularity <= 0.8) {
-        suggestions.push('<strong>Moderate Regularity:</strong> Balanced between groove and variation (rock, reggae, folk)');
-    } else if (regularity < 0.5) {
-        suggestions.push('<strong>Low Regularity:</strong> Indicates ornamental, improvisational, or free-form music (raga, jazz, classical rubato)');
-    }
-    
-    // Percussiveness context
-    if (percussiveness > 0.15) {
-        suggestions.push('<strong>Percussion-Rich:</strong> Emphasizes rhythmic elements (hip-hop, electronic, African traditions, metal)');
-    } else if (percussiveness < 0.05) {
-        suggestions.push('<strong>Melodic Focus:</strong> Prioritizes harmonic and melodic elements (classical, folk, intimate vocals)');
-    }
-    
-    // Rhythmic patterns
-    if (rhythmAnalysis.polyrhythmic) {
-        suggestions.push('<strong>Polyrhythmic:</strong> Complex interlocking rhythms characteristic of African, progressive, and world music traditions');
-    }
-    
-    // Brightness context
-    if (brightness > 0.7) {
-        suggestions.push('<strong>Bright Timbre:</strong> Light, treble-focused sound typical of higher instruments or bright arrangements');
-    } else if (brightness < 0.35) {
-        suggestions.push('<strong>Dark Timbre:</strong> Warm, bass-focused sound typical of lower instruments or darker arrangements');
-    }
-    
-    return `
-        <ul style="margin: 10px 0; padding-left: 20px; line-height: 1.8;">
-            ${suggestions.slice(0, 5).map(s => `<li style="margin: 8px 0;">${s}</li>`).join('')}
-        </ul>
-        <p style="margin-top: 12px; font-size: 0.95em; color: #555;">💡 <strong>Tip:</strong> Use the "Explore Cultures" feature to discover how these musical characteristics appear across different cultural traditions worldwide.</p>
-    `;
-}
-
-function getScaleDescription(scaleName) {
-    const descriptions = {
-        'Major (Western)': '<p>A 7-note diatonic scale with a characteristic bright, happy sound. Used extensively across many musical traditions worldwide.</p>',
-        'Minor (Western)': '<p>A 7-note diatonic scale with a characteristic darker, more melancholic quality. Common in European classical, jazz, and popular music.</p>',
-        'Harmonic Minor': '<p>A minor scale with a raised 7th degree, creating an augmented 2nd interval. Creates an exotic sound used in classical, Middle Eastern, and flamenco music.</p>',
-        'Pentatonic Major': '<p>A 5-note scale found in traditional music across East Asia, Celtic traditions, blues, and many other cultures worldwide.</p>',
-        'Pentatonic Minor': '<p>A 5-note scale common in blues, rock, folk music from various traditions, and traditional music of many cultures.</p>',
-        'Blues': '<p>A 6-note scale incorporating "blue notes" (flattened 3rd, 5th, and 7th). Fundamental to blues, jazz, and rock music.</p>',
-        'Dorian': '<p>A modal scale with a minor 3rd and major 6th. Used in Celtic music, jazz, rock, and traditional music from various regions.</p>',
-        'Phrygian': '<p>A modal scale with a distinctive flattened 2nd degree. Found in Spanish flamenco and traditional music from Mediterranean and Middle Eastern regions.</p>',
-        'Lydian': '<p>A modal scale with a raised 4th degree, creating a dreamy, floating quality. Used in jazz, film scores, and various folk traditions.</p>',
-        'Mixolydian': '<p>A modal scale with a major quality and flattened 7th. Common in rock, folk, and traditional music from many cultures.</p>',
-        'Hirajoshi (Japanese)': '<p>A pentatonic scale traditionally used in Japanese music. Creates a characteristic sound associated with koto and shakuhachi music.</p>',
-        'In Sen (Japanese)': '<p>A pentatonic scale used in traditional Japanese music with a characteristic haunting quality.</p>',
-        'Raga Bhairav (Indian)': '<p>A morning raga in Hindustani classical music, characterized by specific ascending and descending patterns.</p>',
-        'Raga Kafi (Indian)': '<p>A raga in Hindustani classical music, often associated with devotional and folk music.</p>',
-        'Maqam Hijaz (Arabic)': '<p>A mode used in Arabic music characterized by an augmented 2nd interval, creating a distinctive Middle Eastern sound.</p>',
-        'Whole Tone': '<p>A 6-note scale made entirely of whole steps. Used extensively in impressionist music and creates an ambiguous, floating tonality.</p>',
-        'Chromatic': '<p>All 12 pitches of the Western chromatic scale. Used in atonal, serial, and highly chromatic tonal music.</p>'
-    };
-    
-    return descriptions[scaleName] || '<p>An interesting scale structure with unique intervallic relationships.</p>';
-}
-
-// Spectral Analysis Function
-function analyzeSpectrum(channelData, sampleRate) {
-    const fftSize = 2048;
-    const spectrum = [];
-    
-    // Analyze multiple windows
-    let windows = 0;
-    const maxWindows = 50; // Reduced from 200 to prevent freeze
-    for (let i = 0; i < channelData.length - fftSize; i += fftSize * 32) {
-        const window = channelData.slice(i, i + fftSize);
-        const fft = performFFT(window);
-        spectrum.push(fft);
-        windows++;
-        if (windows >= maxWindows) break;
-    }
-    
-    // Calculate average spectrum
-    const avgSpectrum = new Array(fftSize / 2).fill(0);
-    spectrum.forEach(spec => {
-        for (let i = 0; i < spec.length; i++) {
-            avgSpectrum[i] += spec[i];
-        }
-    });
-    avgSpectrum.forEach((val, i, arr) => arr[i] = val / spectrum.length);
-    
-    // Calculate spectral features
-    const spectrumVector = new Float32Array(avgSpectrum);
-    if (audioAnalyzer && typeof audioAnalyzer.analyzeSpectralFeatures === 'function') {
-        const features = audioAnalyzer.analyzeSpectralFeatures(spectrumVector) || {};
-        const centroid = typeof features.centroid === 'number' ? features.centroid : calculateSpectralCentroid(avgSpectrum, sampleRate);
-        const rolloff = typeof features.rolloff === 'number' ? features.rolloff : calculateSpectralRolloff(avgSpectrum, sampleRate);
-        const brightness = typeof features.brightness === 'number' ? features.brightness : centroid / (sampleRate / 2);
-        return {
-            spectrum: avgSpectrum,
-            centroid,
-            rolloff,
-            brightness,
-            flux: features.flux,
-            flatness: features.flatness,
-            engine: audioAnalyzer.essentiaReady ? 'essentia' : 'basic'
-        };
-    }
-
-    const spectralCentroid = calculateSpectralCentroid(avgSpectrum, sampleRate);
-    const spectralRolloff = calculateSpectralRolloff(avgSpectrum, sampleRate);
-    const brightness = spectralCentroid / (sampleRate / 2);
-    
-    return {
-        spectrum: avgSpectrum,
-        centroid: spectralCentroid,
-        rolloff: spectralRolloff,
-        brightness: brightness,
-        engine: 'basic'
-    };
-}
-
-function performFFT(data) {
-    // Simple magnitude spectrum approximation
-    const magnitudes = [];
-    for (let i = 0; i < data.length / 2; i++) {
-        magnitudes.push(Math.abs(data[i]));
-    }
-    return magnitudes;
-}
-
-function calculateSpectralCentroid(spectrum, sampleRate) {
-    let weightedSum = 0;
-    let sum = 0;
-    for (let i = 0; i < spectrum.length; i++) {
-        const freq = (i * sampleRate) / (spectrum.length * 2);
-        weightedSum += freq * spectrum[i];
-        sum += spectrum[i];
-    }
-    return sum > 0 ? weightedSum / sum : 0;
-}
-
-function calculateSpectralRolloff(spectrum, sampleRate) {
-    const totalEnergy = spectrum.reduce((a, b) => a + b, 0);
-    const threshold = totalEnergy * 0.85;
-    let cumulativeEnergy = 0;
-    for (let i = 0; i < spectrum.length; i++) {
-        cumulativeEnergy += spectrum[i];
-        if (cumulativeEnergy >= threshold) {
-            return (i * sampleRate) / (spectrum.length * 2);
-        }
-    }
-    return 0;
-}
-
-function displaySpectralAnalysis(spectralAnalysis) {
-    const chartElement = document.getElementById('spectral-chart');
-    const spectralInfo = document.getElementById('spectral-info');
-    
-    if (!chartElement) {
-        console.error('spectral-chart element not found');
-        return;
-    }
-    
-    const ctx = chartElement.getContext('2d');
-    
-    // Destroy existing chart
-    if (spectralChart) spectralChart.destroy();
-    
-    // Prepare data for visualization (downsample for readability)
-    const downsampleFactor = 8;
-    const labels = [];
-    const data = [];
-    for (let i = 0; i < spectralAnalysis.spectrum.length; i += downsampleFactor) {
-        labels.push(`${(i * 22050 / spectralAnalysis.spectrum.length).toFixed(0)} Hz`);
-        data.push(spectralAnalysis.spectrum[i]);
-    }
-    
-    spectralChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: labels.slice(0, 50),
-            datasets: [{
-                label: 'Spectral Energy',
-                data: data.slice(0, 50),
-                borderColor: 'rgba(76, 175, 80, 1)',
-                backgroundColor: 'rgba(76, 175, 80, 0.2)',
-                tension: 0.3,
-                fill: true
-            }]
-        },
-        options: {
-            responsive: true,
-            plugins: {
-                legend: { display: true },
-                title: {
-                    display: true,
-                    text: 'Frequency Spectrum Analysis'
-                }
-            },
-            scales: {
-                y: {
-                    title: { display: true, text: 'Magnitude' }
-                },
-                x: {
-                    title: { display: true, text: 'Frequency' }
-                }
-            }
-        }
-    });
-    
-    const timbre = spectralAnalysis.brightness > 0.6 ? 'Bright' : spectralAnalysis.brightness > 0.4 ? 'Balanced' : 'Dark';
-    
-    spectralInfo.innerHTML = `
-        <p><strong>Spectral Centroid:</strong> ${spectralAnalysis.centroid.toFixed(2)} Hz</p>
-        <p><strong>Spectral Rolloff:</strong> ${spectralAnalysis.rolloff.toFixed(2)} Hz (85% energy threshold)</p>
-        <p><strong>Brightness:</strong> ${(spectralAnalysis.brightness * 100).toFixed(1)}%</p>
-        <p><strong>Timbre Character:</strong> ${timbre}</p>
-        <p><strong>Analysis:</strong> ${spectralAnalysis.brightness > 0.5 ? 'High-frequency content suggests presence of cymbals, strings, or bright instruments' : 'Low-frequency dominant, suggests drums, bass, or darker timbres'}</p>
-        <p><strong>Engine:</strong> ${currentAnalysisData?.engine === 'essentia' ? 'Essentia.js (WASM)' : 'Basic analyzer'}</p>
-    `;
-}
-
-// Download Functions - Using event delegation to avoid duplicate listeners
-let downloadListenersInitialized = false;
-
-function setupDownloadButtons() {
-    if (downloadListenersInitialized) return; // Only setup once
-    
-    document.addEventListener('click', (e) => {
-        if (e.target?.id === 'download-pitch-chart') {
-            downloadChart(pitchChart, 'pitch-analysis.png');
-        } else if (e.target?.id === 'download-rhythm-chart') {
-            downloadChart(rhythmChart, 'rhythm-analysis.png');
-        } else if (e.target?.id === 'download-spectral-chart') {
-            downloadChart(spectralChart, 'spectral-analysis.png');
-        } else if (e.target?.id === 'download-analysis-data') {
-            downloadJSON(currentAnalysisData, 'music-analysis-data.json');
-        } else if (e.target?.id === 'download-full-report') {
-            generateAnalysisReport();
-        }
-    });
-    
-    downloadListenersInitialized = true;
-}
-
-function downloadChart(chart, filename) {
-    if (!chart) return;
-    const url = chart.toBase64Image();
-    const link = document.createElement('a');
-    link.download = filename;
-    link.href = url;
-    link.click();
-}
-
-function generateAnalysisReport() {
-    if (!currentAnalysisData) return;
-    
-    const reportText = `
-MUSIC ANALYSIS REPORT
-Generated: ${new Date().toLocaleString()}
-Analyzed by: Ethnomusicology Explorer
-Created by: Rohan R. Sagar
-
-═══════════════════════════════════════════════════
-
-FILE INFORMATION
-Duration: ${currentAnalysisData.duration.toFixed(2)} seconds
-Sample Rate: ${currentAnalysisData.sampleRate} Hz
-
-═══════════════════════════════════════════════════
-
-RHYTHM ANALYSIS
-Tempo: ${currentAnalysisData.rhythm.tempo} BPM
-Rhythm Regularity: ${(currentAnalysisData.rhythm.regularity * 100).toFixed(1)}%
-Detected Beats: ${currentAnalysisData.rhythm.peakCount}
-Pattern Complexity: ${currentAnalysisData.rhythm.regularity < 0.6 ? 'Complex (Polyrhythmic)' : 'Simple'}
-
-═══════════════════════════════════════════════════
-
-PITCH ANALYSIS
-Total Pitches Detected: ${currentAnalysisData.pitches.length}
-Average Pitch: ${(currentAnalysisData.pitches.reduce((a,b)=>a+b,0)/currentAnalysisData.pitches.length).toFixed(2)} Hz
-Pitch Range: ${Math.min(...currentAnalysisData.pitches).toFixed(2)} - ${Math.max(...currentAnalysisData.pitches).toFixed(2)} Hz
-
-═══════════════════════════════════════════════════
-
-SPECTRAL ANALYSIS
-Spectral Centroid: ${currentAnalysisData.spectral.centroid.toFixed(2)} Hz
-Spectral Rolloff: ${currentAnalysisData.spectral.rolloff.toFixed(2)} Hz
-Brightness: ${(currentAnalysisData.spectral.brightness * 100).toFixed(1)}%
-Timbre: ${currentAnalysisData.spectral.brightness > 0.6 ? 'Bright' : currentAnalysisData.spectral.brightness > 0.4 ? 'Balanced' : 'Dark'}
-
-═══════════════════════════════════════════════════
-
-For more information, visit: https://www.digitalheritagegy.com
-    `.trim();
-    
-    const blob = new Blob([reportText], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.download = 'music-analysis-report.txt';
-    link.href = url;
-    link.click();
-    URL.revokeObjectURL(url);
-}
-
-function downloadLessonPlan(title, lesson) {
-    const doc = new jsPDF();
-    let yPosition = 20;
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 15;
-    const maxWidth = pageWidth - (margin * 2);
-    
-    // Title
-    doc.setFontSize(18);
-    doc.setFont(undefined, 'bold');
-    doc.text(title, margin, yPosition);
-    yPosition += 12;
-    
-    // Metadata
-    doc.setFontSize(11);
-    doc.setFont(undefined, 'normal');
-    doc.text(`Grade Level: ${lesson.grade} | Duration: ${lesson.duration}`, margin, yPosition);
-    yPosition += 10;
-    
-    // Add a line
-    doc.setDrawColor(102, 126, 234);
-    doc.line(margin, yPosition, pageWidth - margin, yPosition);
-    yPosition += 8;
-    
-    // Learning Objectives
-    doc.setFontSize(13);
-    doc.setFont(undefined, 'bold');
-    doc.text('Learning Objectives', margin, yPosition);
-    yPosition += 7;
-    
-    doc.setFontSize(10);
-    doc.setFont(undefined, 'normal');
-    lesson.objectives.forEach((obj, i) => {
-        const wrapped = doc.splitTextToSize(`${i + 1}. ${obj}`, maxWidth - 5);
-        doc.text(wrapped, margin + 5, yPosition);
-        yPosition += wrapped.length * 4 + 2;
-        
-        if (yPosition > pageHeight - margin) {
-            doc.addPage();
-            yPosition = margin;
-        }
-    });
-    
-    yPosition += 3;
-    
-    // Activities
-    doc.setFontSize(13);
-    doc.setFont(undefined, 'bold');
-    doc.text('Activities', margin, yPosition);
-    yPosition += 7;
-    
-    doc.setFontSize(10);
-    doc.setFont(undefined, 'normal');
-    lesson.activities.forEach((act, i) => {
-        const wrapped = doc.splitTextToSize(`${i + 1}. ${act}`, maxWidth - 5);
-        doc.text(wrapped, margin + 5, yPosition);
-        yPosition += wrapped.length * 4 + 2;
-        
-        if (yPosition > pageHeight - margin) {
-            doc.addPage();
-            yPosition = margin;
-        }
-    });
-    
-    yPosition += 3;
-    
-    // Assessment
-    doc.setFontSize(13);
-    doc.setFont(undefined, 'bold');
-    doc.text('Assessment', margin, yPosition);
-    yPosition += 7;
-    
-    doc.setFontSize(10);
-    doc.setFont(undefined, 'normal');
-    const assessmentWrapped = doc.splitTextToSize(lesson.assessment, maxWidth);
-    doc.text(assessmentWrapped, margin, yPosition);
-    yPosition += assessmentWrapped.length * 4 + 5;
-    
-    if (yPosition > pageHeight - margin) {
-        doc.addPage();
-        yPosition = margin;
-    }
-    
-    // Extensions
-    doc.setFontSize(13);
-    doc.setFont(undefined, 'bold');
-    doc.text('Extensions', margin, yPosition);
-    yPosition += 7;
-    
-    doc.setFontSize(10);
-    doc.setFont(undefined, 'normal');
-    const extensionsWrapped = doc.splitTextToSize(lesson.extensions, maxWidth);
-    doc.text(extensionsWrapped, margin, yPosition);
-    
-    // Footer
-    const pageCount = doc.getNumberOfPages();
-    doc.setFontSize(9);
-    doc.setFont(undefined, 'italic');
-    for (let i = 1; i <= pageCount; i++) {
-        doc.setPage(i);
-        doc.text(`Created with Computational Ethnomusicology App | Digital Heritage GY | Page ${i}/${pageCount}`, 
-                 margin, pageHeight - 10);
-    }
-    
-    // Download
-    doc.save(`lesson-${title.toLowerCase().replace(/\s+/g, '-')}.pdf`);
-}
-
-// Download student worksheet (simplified, student-facing)
-function downloadWorksheet(title, lesson) {
-    const doc = new jsPDF();
-    let yPosition = 20;
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 15;
-    const maxWidth = pageWidth - (margin * 2);
-    
-    // Header
-    doc.setFontSize(16);
-    doc.setFont(undefined, 'bold');
-    doc.text('Student Worksheet', margin, yPosition);
-    yPosition += 10;
-    
-    doc.setFontSize(14);
-    doc.text(title, margin, yPosition);
-    yPosition += 8;
-    
-    doc.setFontSize(10);
-    doc.setFont(undefined, 'normal');
-    doc.text(`Name: ___________________________     Date: ___________`, margin, yPosition);
-    yPosition += 10;
-    
-    // Line
-    doc.setDrawColor(102, 126, 234);
-    doc.line(margin, yPosition, pageWidth - margin, yPosition);
-    yPosition += 8;
-    
-    // Objectives (simplified)
-    doc.setFontSize(12);
-    doc.setFont(undefined, 'bold');
-    doc.text('What You Will Learn:', margin, yPosition);
-    yPosition += 6;
-    
-    doc.setFontSize(10);
-    doc.setFont(undefined, 'normal');
-    lesson.objectives.slice(0, 3).forEach((obj, i) => {
-        const wrapped = doc.splitTextToSize(`• ${obj}`, maxWidth - 5);
-        doc.text(wrapped, margin + 3, yPosition);
-        yPosition += wrapped.length * 4 + 2;
-        
-        if (yPosition > pageHeight - margin) {
-            doc.addPage();
-            yPosition = margin;
-        }
-    });
-    
-    yPosition += 5;
-    
-    // Practice Activities (student-facing)
-    doc.setFontSize(12);
-    doc.setFont(undefined, 'bold');
-    doc.text('Practice Activities:', margin, yPosition);
-    yPosition += 6;
-    
-    doc.setFontSize(10);
-    doc.setFont(undefined, 'normal');
-    
-    // Add 3 simple practice questions
-    const practices = [
-        'Listen to the music sample. What instruments do you hear?',
-        'Draw or describe the rhythm pattern you noticed.',
-        'Write down 2-3 interesting facts you learned about this culture.'
-    ];
-    
-    practices.forEach((practice, i) => {
-        if (yPosition > pageHeight - 40) {
-            doc.addPage();
-            yPosition = margin;
-        }
-        
-        doc.setFont(undefined, 'bold');
-        doc.text(`${i + 1}. ${practice}`, margin, yPosition);
-        yPosition += 6;
-        
-        doc.setFont(undefined, 'normal');
-        // Add lines for answers
-        for (let line = 0; line < 4; line++) {
-            doc.line(margin + 3, yPosition, pageWidth - margin, yPosition);
-            yPosition += 6;
-        }
-        yPosition += 3;
-    });
-    
-    // Reflection section
-    if (yPosition > pageHeight - 40) {
-        doc.addPage();
-        yPosition = margin;
-    }
-    
-    doc.setFontSize(12);
-    doc.setFont(undefined, 'bold');
-    doc.text('Reflection:', margin, yPosition);
-    yPosition += 6;
-    
-    doc.setFontSize(10);
-    doc.setFont(undefined, 'normal');
-    doc.text('What was the most interesting thing you learned today?', margin, yPosition);
-    yPosition += 6;
-    
-    for (let line = 0; line < 5; line++) {
-        doc.line(margin + 3, yPosition, pageWidth - margin, yPosition);
-        yPosition += 6;
-    }
-    
-    // Footer
-    const pageCount = doc.getNumberOfPages();
-    doc.setFontSize(9);
-    doc.setFont(undefined, 'italic');
-    for (let i = 1; i <= pageCount; i++) {
-        doc.setPage(i);
-        doc.text(`Ethnomusicology Explorer | Page ${i}/${pageCount}`, 
-                 margin, pageHeight - 10);
-    }
-    
-    // Download
-    doc.save(`worksheet-${title.toLowerCase().replace(/\s+/g, '-')}.pdf`);
-}
-
-// Classroom Mode: UI and audio volume cap
-function initializeClassroomMode() {
-    const toggle = document.getElementById('classroom-mode-toggle');
-    const enabled = localStorage.getItem('classroomMode') === 'true';
-    applyClassroomMode(enabled);
-    if (toggle) {
-        toggle.textContent = enabled ? '🏫 On' : '🏫';
-        toggle.addEventListener('click', () => {
-            const next = !document.body.classList.contains('classroom-mode');
-            applyClassroomMode(next);
-            localStorage.setItem('classroomMode', String(next));
-            toggle.textContent = next ? '🏫 On' : '🏫';
-        });
-    }
-}
-
-function applyClassroomMode(enabled) {
-    if (enabled) {
-        document.body.classList.add('classroom-mode');
-        if (window.__MASTER_GAIN) window.__MASTER_GAIN.gain.value = 0.18;
-    } else {
-        document.body.classList.remove('classroom-mode');
-        if (window.__MASTER_GAIN) window.__MASTER_GAIN.gain.value = 0.35;
-    }
-}
-
-// Games
-function initializeGames() {
-    initializeRhythmGame();
-    initializeQuiz();
-    initializeScaleExplorer();
-}
-
-function initializeRhythmGame() {
-    const startBtn = document.getElementById('start-rhythm-game');
-    
-    startBtn.addEventListener('click', () => {
-        const gameDiv = document.getElementById('rhythm-game');
-        gameDiv.style.display = 'block';
-        startBtn.style.display = 'none';
-        trackDashboardActivity('game');
-        
-        // Simple rhythm game logic
-        document.getElementById('rhythm-score').innerHTML = '<p>Tap the pads to create rhythms! 🎵</p>';
-    });
-    
-    const pads = document.querySelectorAll('.rhythm-pad');
-    
-    pads.forEach((pad, index) => {
-        pad.addEventListener('click', () => {
-            const frequencies = [100, 200, 400, 600];
-            playNote(frequencies[index], audioContext.currentTime, 0.2);
-            pad.style.transform = 'scale(0.9)';
-            setTimeout(() => pad.style.transform = 'scale(1)', 100);
-        });
-    });
-}
-
-function initializeQuiz() {
-    const startBtn = document.getElementById('start-quiz');
-    const quizContainer = document.getElementById('quiz-container');
-    
-    const questions = [
-        {
-            question: 'Which instrument is central to Indian classical music?',
-            options: ['Sitar', 'Guitar', 'Piano', 'Trumpet'],
-            correct: 0
-        },
-        {
-            question: 'What is a pentatonic scale?',
-            options: ['3 notes', '5 notes', '7 notes', '12 notes'],
-            correct: 1
-        },
-        {
-            question: 'The kora is from which region?',
-            options: ['East Asia', 'West Africa', 'Europe', 'South America'],
-            correct: 1
-        }
-    ];
-    
-    let currentQuestion = 0;
-    let score = 0;
-    
-    startBtn.addEventListener('click', () => {
-        quizContainer.style.display = 'block';
-        startBtn.style.display = 'none';
-        trackDashboardActivity('quiz');
-        showQuestion();
-    });
-    
-    function showQuestion() {
-        if (currentQuestion >= questions.length) {
-            quizContainer.innerHTML = `<h3>Quiz Complete! Score: ${score}/${questions.length}</h3>`;
-            return;
-        }
-        
-        const q = questions[currentQuestion];
-        quizContainer.innerHTML = `
-            <h4>${q.question}</h4>
-            ${q.options.map((opt, i) => `
-                <button class="btn-primary" style="display: block; margin: 10px 0; width: 100%;" data-answer="${i}">
-                    ${opt}
-                </button>
-            `).join('')}
-        `;
-        
-        quizContainer.querySelectorAll('button').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const answer = parseInt(e.target.dataset.answer);
-                if (answer === q.correct) {
-                    score++;
-                    e.target.style.background = 'green';
-                } else {
-                    e.target.style.background = 'red';
-                }
-                setTimeout(() => {
-                    currentQuestion++;
-                    showQuestion();
-                }, 1000);
-            });
-        });
-    }
-}
-
-function initializeScaleExplorer() {
-    const playScaleBtn = document.getElementById('play-scale');
-    const scaleSelect = document.getElementById('scale-select');
-    const scaleInfo = document.getElementById('scale-info');
-    
-    // Replace native select with custom dropdown for better cross-browser styling
-    if (scaleSelect) {
-        const options = Array.from(scaleSelect.options).map(opt => ({ value: opt.value, label: opt.text }));
-        const customDropdown = document.createElement('div');
-        customDropdown.className = 'custom-dropdown';
-        customDropdown.innerHTML = `
-            <button class="custom-dropdown-btn" style="background: white; color: #333; border: 2px solid #333; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 1em; width: 100%; max-width: 300px; text-align: left;">
-                ${options[0].label}
-            </button>
-            <div class="custom-dropdown-menu" style="display: none; background: white; border: 2px solid #333; border-top: none; border-radius: 0 0 8px 8px; position: absolute; top: 100%; left: 0; width: 100%; max-width: 300px; z-index: 1000; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-                ${options.map(opt => `<div class="custom-dropdown-option" data-value="${opt.value}" style="padding: 12px 20px; color: #333; cursor: pointer; font-weight: 500; hover:background: #f5f5f5;">${opt.label}</div>`).join('')}
-            </div>
-        `;
-        customDropdown.style.position = 'relative';
-        customDropdown.style.display = 'inline-block';
-        customDropdown.style.marginBottom = '15px';
-        customDropdown.style.width = '100%';
-        customDropdown.style.maxWidth = '300px';
-        
-        scaleSelect.parentNode.insertBefore(customDropdown, scaleSelect);
-        scaleSelect.style.display = 'none';
-        
-        const btn = customDropdown.querySelector('.custom-dropdown-btn');
-        const menu = customDropdown.querySelector('.custom-dropdown-menu');
-        
-        btn.addEventListener('click', () => {
-            menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
-        });
-        
-        customDropdown.querySelectorAll('.custom-dropdown-option').forEach(opt => {
-            opt.addEventListener('click', () => {
-                const value = opt.dataset.value;
-                btn.textContent = opt.textContent;
-                scaleSelect.value = value;
-                menu.style.display = 'none';
-            });
-            opt.addEventListener('mouseover', () => {
-                opt.style.backgroundColor = '#f5f5f5';
-            });
-            opt.addEventListener('mouseout', () => {
-                opt.style.backgroundColor = 'white';
-            });
-        });
-        
-        // Close menu on outside click
-        document.addEventListener('click', (e) => {
-            if (!customDropdown.contains(e.target)) {
-                menu.style.display = 'none';
-            }
-        });
-    }
-    
-    const scales = {
-        'major': { notes: ['C4', 'D4', 'E4', 'F4', 'G4', 'A4', 'B4', 'C5'], info: 'The major scale is foundational in Western music, known for its bright, happy sound.' },
-        'minor': { notes: ['A3', 'B3', 'C4', 'D4', 'E4', 'F4', 'G4', 'A4'], info: 'The natural minor scale has a darker, more melancholic sound than major.' },
-        'pentatonic': { notes: ['C4', 'D4', 'E4', 'G4', 'A4', 'C5'], info: 'Used globally in many cultures including Chinese, Japanese, and West African music.' },
-        'raga': { notes: ['C4', 'D4', 'E4', 'F4', 'G4', 'A4', 'B4', 'C5'], info: 'Indian ragas have specific rules for melody and are associated with times of day and emotions.' },
-        'maqam': { notes: ['C4', 'Db4', 'E4', 'F4', 'G4', 'Ab4', 'B4', 'C5'], info: 'Middle Eastern maqamat use quarter tones and have unique emotional qualities.' }
-    };
-    
-    playScaleBtn.addEventListener('click', async () => {
-        if (!audioContext) {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            // Create master gain if not exists
-            if (!window.__MASTER_GAIN) {
-                try {
-                    const masterGain = audioContext.createGain();
-                    masterGain.gain.value = 1.0;
-                    masterGain.connect(audioContext.destination);
-                    window.__MASTER_GAIN = masterGain;
-                } catch (e) {
-                    console.warn('Master gain creation failed:', e);
-                }
-            }
-        }
-        
-        // Resume audio context if suspended (Safari requirement)
-        if (audioContext.state === 'suspended') {
-            try {
-                await audioContext.resume();
-                console.log('AudioContext resumed for Safari');
-            } catch (e) {
-                console.warn('AudioContext resume failed:', e);
-                return; // Exit if resume fails
-            }
-        }
-        
-        console.log('Playing scale, audioContext state:', audioContext.state);
-        
-        const selectedScale = scaleSelect.value;
-        const scale = scales[selectedScale];
-        
-        const currentTime = audioContext.currentTime;
-        
-        scale.notes.forEach((note, i) => {
-            playNote(noteToFrequency(note), currentTime + i * 0.5, 0.3);
-        });
-        
-        scaleInfo.innerHTML = `<p style="margin-top: 15px; padding: 15px; background: #f0f0f0; border-radius: 8px;">${scale.info}</p>`;
-    });
-}
-
-// Recorder
-function initializeRecorder() {
-    const recordBtn = document.getElementById('record-btn');
-    const stopRecordBtn = document.getElementById('stop-record-btn');
-    const recordingStatus = document.getElementById('recording-status');
-    const downloadBtn = document.getElementById('download-recording');
-    let mediaStream = null;
-    let recordingMimeType = 'audio/webm'; // Default, will be updated
-    
-    if (!recordBtn || !stopRecordBtn) {
-        showToast('error', 'Missing recorder UI elements');
-        return;
-    }
-    
-    recordBtn.addEventListener('click', async () => {
-        try {
-            if (!audioContext) {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            
-            showToast('info', 'Requesting microphone access...');
-            mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            showToast('success', 'Microphone access granted');
-            
-            // Safari and cross-browser format compatibility
-            let mimeType = 'audio/webm'; // Default
-            const options = {};
-            
-            // Check browser-specific formats (Safari prioritizes MP4)
-            if (MediaRecorder.isTypeSupported('audio/mp4')) {
-                mimeType = 'audio/mp4';
-                options.mimeType = mimeType;
-            } else if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-                mimeType = 'audio/webm;codecs=opus';
-                options.mimeType = mimeType;
-            } else if (MediaRecorder.isTypeSupported('audio/webm')) {
-                mimeType = 'audio/webm';
-                options.mimeType = mimeType;
-            } else if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) {
-                mimeType = 'audio/ogg;codecs=opus';
-                options.mimeType = mimeType;
-            }
-            // If none work, use browser default (don't specify mimeType)
-            
-            recordingMimeType = mimeType;
-            console.log('Recording format:', mimeType, '| Browser:', navigator.userAgent.includes('Safari') ? 'Safari' : 'Other');
-            mediaRecorder = new MediaRecorder(mediaStream, Object.keys(options).length > 0 ? options : undefined);
-            audioChunks = [];
-            
-            mediaRecorder.addEventListener('dataavailable', event => {
-                audioChunks.push(event.data);
-            });
-            
-            mediaRecorder.addEventListener('stop', () => {
-                
-                const audioBlob = new Blob(audioChunks, { type: recordingMimeType });
-                console.log('Audio blob created', { size: audioBlob.size, type: audioBlob.type, chunks: audioChunks.length });
-                
-                if (audioBlob.size === 0) {
-                    showToast('error', 'Recording failed: empty audio blob');
-                    return;
-                }
-                
-                const audioUrl = URL.createObjectURL(audioBlob);
-                console.log('Object URL created:', !!audioUrl);
-                
-                // Get elements
-                const audio = document.getElementById('audio-playback');
-                const recordedAudioDiv = document.getElementById('recorded-audio');
-                const analyzeBtn = document.getElementById('analyze-recording');
-                
-                console.log('Recorded audio UI elements', { audioFound: !!audio, recordedAudioDivFound: !!recordedAudioDiv });
-                
-                // Verify elements exist
-                if (!audio) {
-                    showToast('error', 'Audio player not found');
-                    return;
-                }
-                if (!recordedAudioDiv) {
-                    showToast('error', 'Recording container not found');
-                    return;
-                }
-                
-                // Set audio source and show player
-                audio.src = audioUrl;
-                audio.load();
-                
-                // Force display the recorded audio section
-                recordedAudioDiv.style.display = 'block';
-                recordedAudioDiv.style.visibility = 'visible';
-                recordedAudioDiv.style.opacity = '1';
-                
-                showToast('success', `Recording ready (${(audioBlob.size / 1024).toFixed(1)} KB)`);
-                
-                // Stop media stream tracks
-                if (mediaStream) {
-                    mediaStream.getTracks().forEach(track => track.stop());
-                }
-                
-                // Enable analysis button
-                if (analyzeBtn) {
-                    analyzeBtn.onclick = () => {
-                        console.log('Analyze button clicked, blob size:', audioBlob.size);
-                        analyzeRecording(audioBlob);
-                    };
-                    console.log('Analyze button enabled');
-                } else {
-                    console.error('ERROR: analyze-recording button not found!');
-                }
-                
-                // Enable download
-                if (downloadBtn) {
-                    downloadBtn.onclick = () => {
-                        const a = document.createElement('a');
-                        a.href = audioUrl;
-                        // Determine file extension based on mime type
-                        let ext = 'webm';
-                        if (recordingMimeType.includes('mp4') || recordingMimeType.includes('aac')) ext = 'mp4';
-                        else if (recordingMimeType.includes('wav')) ext = 'wav';
-                        else if (recordingMimeType.includes('ogg')) ext = 'ogg';
-                        a.download = `recording-${Date.now()}.${ext}`;
-                        a.click();
-                        console.log('Download initiated');
-                    };
-                    console.log('Download button enabled');
-                }
-                
-                progressTracker?.addAchievement('recorded_audio');
-            });
-            
-            mediaRecorder.start();
-            recordBtn.disabled = true;
-            stopRecordBtn.disabled = false;
-            recordingStatus.textContent = '🔴 Recording...';
-        } catch (error) {
-            console.error('Recording error:', error);
-            recordingStatus.innerHTML = `
-                <div style="color: #f44336; margin-top: 10px;">
-                    ❌ Recording failed: ${error.message}<br>
-                    <small>Please allow microphone access to record.</small>
-                </div>
-            `;
-        }
-    });
-    
-    stopRecordBtn.addEventListener('click', () => {
-        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-            mediaRecorder.stop();
-        } else {
-            showToast('error', 'Cannot stop — no active recording');
-        }
-        recordBtn.disabled = false;
-        stopRecordBtn.disabled = true;
-        recordingStatus.textContent = '✅ Recording complete!';
-    });
-}
-
-async function analyzeRecording(audioBlob) {
-    const analysisDiv = document.getElementById('recording-analysis');
-    
-    if (!analysisDiv) {
-        alert('ERROR: recording-analysis element not found!');
-        return;
-    }
-    
-    analysisDiv.innerHTML = '<p style="padding: 20px; background: #e3f2fd; border-radius: 8px; font-size: 1.1em;">🔄 Analyzing your recording...</p>';
-    
-    try {
-        const arrayBuffer = await audioBlob.arrayBuffer();
-        let audioBuffer;
-        
-        try {
-            audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
-        } catch (decodeError) {
-            throw new Error(`Failed to decode audio: ${decodeError.message}`);
-        }
-        
-        const channelData = audioBuffer.getChannelData(0);
-        
-        // Comprehensive analysis
-        if (!audioAnalyzer) {
-            throw new Error('AudioAnalyzer not initialized');
-        }
-        
-        // Defensive checks for method availability
-        let rhythmAnalysis = {};
-        let pitchAnalysis = {};
-        let timbreAnalysis = {};
-        
-        try {
-            if (typeof audioAnalyzer.analyzeRhythm === 'function') {
-                rhythmAnalysis = audioAnalyzer.analyzeRhythm(channelData, audioBuffer.sampleRate);
-            } else {
-                console.warn('analyzeRhythm not available, using defaults');
-                rhythmAnalysis = { tempo: 0, peakCount: 0, regularity: 0, intervals: [] };
-            }
-        } catch (e) {
-            console.error('Error analyzing rhythm:', e);
-            rhythmAnalysis = { tempo: 0, peakCount: 0, regularity: 0, intervals: [] };
-        }
-        
-        try {
-            if (typeof audioAnalyzer.analyzePitch === 'function') {
-                pitchAnalysis = audioAnalyzer.analyzePitch(channelData, audioBuffer.sampleRate);
-            } else {
-                console.warn('analyzePitch not available, using defaults');
-                pitchAnalysis = { dominantFrequency: 0, frequency: 0, note: 'None', clarity: 0, confidence: 0 };
-            }
-        } catch (e) {
-            console.error('Error analyzing pitch:', e);
-            pitchAnalysis = { dominantFrequency: 0, frequency: 0, note: 'None', clarity: 0, confidence: 0 };
-        }
-        
-        try {
-            if (typeof audioAnalyzer.analyzeTimbre === 'function') {
-                timbreAnalysis = audioAnalyzer.analyzeTimbre(channelData);
-            } else {
-                console.warn('analyzeTimbre not available, using defaults');
-                timbreAnalysis = { spectralCentroid: 0, brightness: 0, brightnessLabel: 'Unknown', energy: 0 };
-            }
-        } catch (e) {
-            console.error('Error analyzing timbre:', e);
-            timbreAnalysis = { spectralCentroid: 0, brightness: 0, brightnessLabel: 'Unknown', energy: 0 };
-        }
-        
-        // Find similar cultures based on characteristics
-        const allCultures = getAllCultures();
-        let matches = [];
-        
-        allCultures.forEach(culture => {
-            let score = 0;
-            const tempoRange = culture.characteristics.tempo.split('-').map(t => parseInt(t));
-            const avgTempo = (tempoRange[0] + tempoRange[1]) / 2;
-            
-            // Tempo matching (more granular scoring)
-            const tempoDiff = Math.abs(rhythmAnalysis.tempo - avgTempo);
-            if (tempoDiff < 15) score += 4;
-            else if (tempoDiff < 30) score += 3;
-            else if (tempoDiff < 50) score += 2;
-            else if (tempoDiff < 75) score += 1;
-            
-            // Rhythm regularity matching
-            if (rhythmAnalysis.regularity > 0.7 && culture.characteristics.rhythm.includes('regular')) score += 3;
-            if (rhythmAnalysis.regularity < 0.5 && culture.characteristics.rhythm.includes('complex')) score += 3;
-            if (rhythmAnalysis.regularity >= 0.5 && rhythmAnalysis.regularity <= 0.7) score += 1; // moderate
-            
-            // Timbre/brightness matching
-            if (timbreAnalysis.brightness) {
-                if (timbreAnalysis.brightness > 0.6 && culture.characteristics.instruments.toLowerCase().includes('metal')) score += 2;
-                if (timbreAnalysis.brightness > 0.6 && culture.characteristics.instruments.toLowerCase().includes('percussion')) score += 2;
-                if (timbreAnalysis.brightness < 0.4 && culture.characteristics.instruments.toLowerCase().includes('drum')) score += 2;
-                if (timbreAnalysis.brightness < 0.4 && culture.characteristics.instruments.toLowerCase().includes('string')) score += 1;
-            }
-            
-            // Pitch/frequency matching
-            if (pitchAnalysis.dominantFrequency > 0) {
-                if (pitchAnalysis.dominantFrequency > 300 && culture.characteristics.instruments.toLowerCase().includes('flute')) score += 2;
-                if (pitchAnalysis.dominantFrequency > 300 && culture.characteristics.instruments.toLowerCase().includes('vocal')) score += 1;
-                if (pitchAnalysis.dominantFrequency < 200 && culture.characteristics.instruments.toLowerCase().includes('drum')) score += 2;
-            }
-            
-            // Beat count matching (for rhythmic complexity)
-            if (rhythmAnalysis.peakCount > 20 && culture.characteristics.rhythm.includes('complex')) score += 2;
-            if (rhythmAnalysis.peakCount < 10 && culture.characteristics.rhythm.includes('simple')) score += 1;
-            
-            // Add randomization to scoring to make matches less predictable
-            // Each culture gets a random modifier between -2 and +3
-            const randomModifier = Math.floor(Math.random() * 6) - 2;
-            score += randomModifier;
-            
-            // Ensure score stays non-negative
-            score = Math.max(0, score);
-            
-            if (score > 0) {
-                matches.push({ culture, score });
-            }
-        });
-        
-        // Sort and add small random shuffling for ties
-        matches.sort((a, b) => {
-            if (b.score === a.score) {
-                // For tied scores, randomly determine order
-                return Math.random() - 0.5;
-            }
-            return b.score - a.score;
-        });
-        
-        const topMatches = matches.slice(0, 3);
-        
-        // Extract genres from top match if available
-        let detectedGenres = [];
-        if (topMatches.length > 0 && topMatches[0].culture.genres && Array.isArray(topMatches[0].culture.genres)) {
-            detectedGenres = topMatches[0].culture.genres;
-        }
-        
-        let comparisonHTML = '';
-        if (topMatches.length > 0) {
-            let genreHTML = '';
-            if (detectedGenres.length > 0) {
-                genreHTML = `
-                    <div style="margin: 15px 0; padding: 12px; background: #fff9c4; border-radius: 6px; border-left: 4px solid #f9a825;">
-                        <h5 style="margin: 0 0 8px; color: #f57f17;">🎵 Detected Genres</h5>
-                        <p style="margin: 0; font-size: 0.9em; color: #333;">
-                            ${detectedGenres.join(', ')}
-                        </p>
-                    </div>
-                `;
-            }
-            
-            comparisonHTML = `
-                <div style="margin-top: 20px; padding: 15px; background: #e8f5e9; border-radius: 8px; border-left: 4px solid #4caf50;">
-                    <h4 style="margin-top: 0; color: #2e7d32;">🌍 Similar Musical Cultures</h4>
-                    ${genreHTML}
-                    <p style="margin: 0 0 15px; font-size: 0.9em;">
-                        Based on your recording's tempo, rhythm, and characteristics, here are similar cultures:
-                    </p>
-                    ${topMatches.map((match, i) => `
-                        <div style="margin: 10px 0; padding: 12px; background: white; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-                            <strong style="font-size: 1.1em;">${i + 1}. ${match.culture.emoji} ${match.culture.name}</strong>
-                            <p style="margin: 5px 0 0; font-size: 0.85em; color: #555;">
-                                <strong>Match Score:</strong> ${match.score}/19 | 
-                                <strong>Typical Tempo:</strong> ${match.culture.characteristics.tempo} BPM
-                            </p>
-                            <p style="margin: 5px 0 0; font-size: 0.85em; color: #666;">
-                                <strong>Rhythm Style:</strong> ${match.culture.characteristics.rhythm}
-                            </p>
-                            <p style="margin: 5px 0 0; font-size: 0.85em; color: #666;">
-                                <strong>Common Scales:</strong> ${match.culture.characteristics.scales}
-                            </p>
-                        </div>
-                    `).join('')}
-                    <button class="btn-secondary" style="margin-top: 10px;" onclick="document.querySelector('[data-tab=\\'explore\\']').click(); setTimeout(() => document.getElementById('explore-tab').scrollIntoView({behavior: 'smooth'}), 100);">
-                        🔍 Explore These Cultures
-                    </button>
-                </div>
-            `;
-        } else {
-            comparisonHTML = `
-                <div style="margin-top: 20px; padding: 15px; background: #fff3e0; border-radius: 8px; border-left: 4px solid #ff9800;">
-                    <h4 style="margin-top: 0;">🌍 Cultural Comparison</h4>
-                    <p style="margin: 0; font-size: 0.9em;">
-                        No strong matches found with the available cultures. Your recording might have unique characteristics!
-                        Try recording with clearer rhythm or longer duration for better matching.
-                    </p>
-                </div>
-            `;
-        }
-        
-        console.log('Rendering analysis results...');
-        analysisDiv.innerHTML = `
-            <div style="margin-top: 20px; padding: 20px; background: #f5f5f5; border-radius: 10px;">
-                <h3 style="margin-top: 0; color: #667eea;">📊 Your Recording Analysis</h3>
-                
-                <div style="display: grid; gap: 15px; margin: 20px 0;">
-                    <div style="padding: 15px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                        <h4 style="margin: 0 0 10px; color: #ff9800;">🥁 Rhythm & Tempo</h4>
-                        <p style="margin: 5px 0;"><strong>Tempo:</strong> ${rhythmAnalysis.tempo} BPM</p>
-                        <p style="margin: 5px 0;"><strong>Regularity:</strong> ${(rhythmAnalysis.regularity * 100).toFixed(1)}%</p>
-                        <p style="margin: 5px 0;"><strong>Detected Beats:</strong> ${rhythmAnalysis.peakCount}</p>
-                        <p style="margin: 8px 0 0; padding: 8px; background: #fff3e0; border-radius: 4px; font-size: 0.85em;">
-                            ${rhythmAnalysis.regularity > 0.7 ? '✓ Steady, consistent rhythm' : rhythmAnalysis.regularity > 0.5 ? '~ Moderately regular pattern' : '≈ Variable, free-flowing rhythm'}
-                        </p>
-                    </div>
-                    
-                    <div style="padding: 15px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                        <h4 style="margin: 0 0 10px; color: #9c27b0;">🎵 Pitch & Melody</h4>
-                        <p style="margin: 5px 0;"><strong>Dominant Frequency:</strong> ${pitchAnalysis.dominantFrequency.toFixed(1)} Hz</p>
-                        <p style="margin: 5px 0;"><strong>Pitch Stability:</strong> ${(pitchAnalysis.clarity * 100).toFixed(1)}%</p>
-                        <p style="margin: 8px 0 0; padding: 8px; background: #f3e5f5; border-radius: 4px; font-size: 0.85em;">
-                            ${pitchAnalysis.clarity > 0.7 ? '✓ Clear, stable pitch' : pitchAnalysis.clarity > 0.4 ? '~ Moderate pitch variation' : '≈ Highly variable pitch'}
-                        </p>
-                    </div>
-                    
-                    <div style="padding: 15px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                        <h4 style="margin: 0 0 10px; color: #4caf50;">🎨 Timbre & Texture</h4>
-                        <p style="margin: 5px 0;"><strong>Brightness:</strong> ${(timbreAnalysis.brightness * 100).toFixed(1)}%</p>
-                        <p style="margin: 5px 0;"><strong>Harmonic Complexity:</strong> ${timbreAnalysis.spectralCentroid.toFixed(0)} Hz</p>
-                        <p style="margin: 8px 0 0; padding: 8px; background: #e8f5e9; border-radius: 4px; font-size: 0.85em;">
-                            ${timbreAnalysis.brightness > 0.6 ? '✓ Bright, shimmering tone' : timbreAnalysis.brightness > 0.4 ? '~ Balanced timbre' : '≈ Warm, mellow tone'}
-                        </p>
-                    </div>
-                </div>
-                
-                ${comparisonHTML}
-                
-                <div style="margin-top: 20px; padding: 12px; background: #e3f2fd; border-radius: 8px; border-left: 4px solid #2196f3;">
-                    <p style="margin: 0; font-size: 0.9em;">
-                        <strong>💡 Tip:</strong> Try recording yourself playing or singing music from different cultures to compare and explore how musical characteristics vary across traditions!
-                    </p>
-                </div>
-            </div>
-        `;
-        
-        progressTracker?.addAchievement('analyzed_recording');
-    } catch (error) {
-        analysisDiv.innerHTML = `
-            <div style="padding: 15px; background: #ffebee; border-radius: 8px; color: #c62828;">
-                <strong>❌ Analysis Failed:</strong> ${error.message}
-                <p style="margin: 10px 0 0; font-size: 0.9em;">
-                    Try recording for at least 3-5 seconds with clear audio.
-                </p>
-            </div>
-        `;
-        showToast('error', 'Analysis error: ' + error.message);
-    }
-}
-
-// Live Pitch Detection
-function initializeLivePitch() {
-    const startBtn = document.getElementById('start-live-pitch');
-    const stopBtn = document.getElementById('stop-live-pitch');
-    const canvas = document.getElementById('pitch-contour');
-    const display = document.getElementById('pitch-display');
-    
-    if (!startBtn || !canvas) return;
-    
-    visualizer = new Visualizer3D(canvas);
-    let pitchHistory = [];
-    let animationId = null;
-    
-    function detectPitchLoop() {
-        if (!pitchDetector || !pitchDetector.isActive) return;
-        
-        const pitch = pitchDetector.getPitch();
-        const volume = pitchDetector.getVolume();
-        
-        if (pitch > 0 && pitch < 2000) {
-            pitchHistory.push(pitch);
-            if (pitchHistory.length > 100) pitchHistory.shift();
-            
-            // Display pitch info
-            if (display) {
-                const note = frequencyToNote(pitch);
-                display.innerHTML = `
-                    <div style="font-size: 2em; font-weight: bold; color: #00ff00;">${note}</div>
-                    <div>Frequency: ${pitch.toFixed(2)} Hz</div>
-                    <div>Volume: ${(volume * 100).toFixed(1)}%</div>
-                `;
-            }
-            
-            // Draw pitch contour
-            visualizer.drawPitchContour(pitchHistory);
-        }
-        
-        animationId = requestAnimationFrame(detectPitchLoop);
-    }
-    
-    function frequencyToNote(freq) {
-        const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-        const a4 = 440;
-        const halfSteps = Math.round(12 * Math.log2(freq / a4));
-        const octave = Math.floor((halfSteps + 57) / 12);
-        const noteIndex = (halfSteps + 57) % 12;
-        return noteNames[noteIndex] + octave;
-    }
-    
-    startBtn.addEventListener('click', async () => {
-        if (!audioContext) {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        
-        pitchDetector = new RealTimePitchDetector(audioContext);
-        const success = await pitchDetector.start();
-        
-        if (success) {
-            startBtn.disabled = true;
-            stopBtn.disabled = false;
-            pitchHistory = [];
-            detectPitchLoop();
-            progressTracker.addAchievement('used_live_pitch');
-        } else {
-            showToast('error', 'Microphone access denied. Please allow microphone access.');
-        }
-    });
-    
-    stopBtn?.addEventListener('click', () => {
-        if (pitchDetector) {
-            pitchDetector.stop();
-            pitchDetector = null;
-        }
-        if (animationId) {
-            cancelAnimationFrame(animationId);
-            animationId = null;
-        }
-        startBtn.disabled = false;
-        stopBtn.disabled = true;
-        pitchHistory = [];
-        if (display) display.innerHTML = '<div style="opacity: 0.6;">Click Start to begin pitch detection</div>';
-    });
-}
-
-// Composer & Looper
-function initializeComposer() {
-    // Initialize culture select dropdowns for scale mixer
-    const basicCultures = getAllCultures();
-    const culture1Select = document.getElementById('culture1-select');
-    const culture2Select = document.getElementById('culture2-select');
-    
-    basicCultures.forEach(culture => {
-        const option1 = document.createElement('option');
-        option1.value = culture.id;
-        option1.textContent = culture.name;
-        culture1Select?.appendChild(option1);
-        
-        const option2 = document.createElement('option');
-        option2.value = culture.id;
-        option2.textContent = culture.name;
-        culture2Select?.appendChild(option2);
-    });
-    
-    // Mix scales button
-    document.getElementById('mix-scales')?.addEventListener('click', () => {
-        const culture1Id = culture1Select?.value;
-        const culture2Id = culture2Select?.value;
-        
-        if (!culture1Id || !culture2Id) {
-            showToast('warning', 'Please select two cultures');
-            return;
-        }
-        
-        const culture1 = basicCultures.find(c => c.id === culture1Id);
-        const culture2 = basicCultures.find(c => c.id === culture2Id);
-        
-        if (!culture1 || !culture2) return;
-        
-        // Get scales from culture characteristics
-        const scales1 = culture1.characteristics.scales.split(',').map(s => s.trim());
-        const scales2 = culture2.characteristics.scales.split(',').map(s => s.trim());
-        
-        const displayDiv = document.getElementById('mixed-scale-display');
-        displayDiv.innerHTML = `
-            <div style="margin-top: 20px; padding: 20px; background: #f0f4ff; border-radius: 8px;">
-                <h4>${culture1.emoji} ${culture1.name} Scales:</h4>
-                <p>${scales1.join(', ')}</p>
-                
-                <h4>${culture2.emoji} ${culture2.name} Scales:</h4>
-                <p>${scales2.join(', ')}</p>
-                
-                <h4>✨ Mixed Characteristics:</h4>
-                <p>
-                    <strong>Blended Rhythm:</strong> ${culture1.characteristics.rhythm} + ${culture2.characteristics.rhythm}<br>
-                    <strong>Combined Instruments:</strong> ${culture1.characteristics.instruments} + ${culture2.characteristics.instruments}<br>
-                    <strong>Tempos:</strong> ${culture1.characteristics.tempo} / ${culture2.characteristics.tempo}
-                </p>
-                
-                <button class="btn-primary" onclick="playMixedScale('${culture1Id}', '${culture2Id}')">🔊 Play Mixed Scale</button>
-                <p style="margin-top: 15px; font-size: 0.9em; color: #666;">
-                    This creates an interesting fusion of musical traditions from ${culture1.name} and ${culture2.name}!
-                </p>
-            </div>
-        `;
-    });
-    
-    // Composition canvas
-    const canvas = document.getElementById('composition-canvas');
-    if (canvas) {
-        const ctx = canvas.getContext('2d');
-        let notes = [];
-        
-        // Set canvas display size
-        canvas.style.border = '2px solid #667eea';
-        canvas.style.cursor = 'crosshair';
-        canvas.style.backgroundColor = '#34495e';
-        
-        function drawGrid() {
-            // Clear canvas with background
-            ctx.fillStyle = '#34495e';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            
-            // Draw grid lines
-            ctx.strokeStyle = '#555';
-            ctx.lineWidth = 1;
-            for (let i = 0; i <= canvas.width; i += 50) {
-                ctx.beginPath();
-                ctx.moveTo(i, 0);
-                ctx.lineTo(i, canvas.height);
-                ctx.stroke();
-            }
-            for (let i = 0; i <= canvas.height; i += 50) {
-                ctx.beginPath();
-                ctx.moveTo(0, i);
-                ctx.lineTo(canvas.width, i);
-                ctx.stroke();
-            }
-            
-            // Draw center line
-            ctx.strokeStyle = '#667eea';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(0, canvas.height / 2);
-            ctx.lineTo(canvas.width, canvas.height / 2);
-            ctx.stroke();
-            
-            // Draw notes
-            notes.forEach(note => {
-                ctx.fillStyle = '#00ff00';
-                ctx.beginPath();
-                ctx.arc(note.x, note.y, 8, 0, Math.PI * 2);
-                ctx.fill();
-            });
-            
-            // Draw help text
-            ctx.fillStyle = '#999';
-            ctx.font = '12px Arial';
-            ctx.fillText('Click to add notes', 10, 20);
-        }
-        
-        // Status label under canvas
-        const statusEl = document.getElementById('composition-status') || (() => {
-            const el = document.createElement('div');
-            el.id = 'composition-status';
-            el.style.margin = '8px 0 0';
-            el.style.fontSize = '0.9em';
-            el.style.opacity = '0.85';
-            el.style.color = '#f1f5f9';
-            el.style.textAlign = 'center';
-            el.setAttribute('role', 'status');
-            el.setAttribute('aria-live', 'polite');
-            const parent = canvas.parentElement;
-            if (parent) {
-                parent.insertBefore(el, canvas.nextSibling);
-            }
-            return el;
-        })();
-        const setStatus = (text) => { if (statusEl) statusEl.textContent = text; };
-
-        // Initial draw
-        drawGrid();
-        setStatus('Click the canvas to add notes.');
-        
-        canvas.addEventListener('click', (e) => {
-            const rect = canvas.getBoundingClientRect();
-            notes.push({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-            drawGrid();
-            setStatus(`Notes: ${notes.length}`);
-        });
-        
-        const playBtn = document.getElementById('play-composition');
-        const stopBtn = document.getElementById('stop-composition');
-        let reenableTimer = null;
-        playBtn?.addEventListener('click', async () => {
-            try {
-                if (!window.composer) {
-                    setStatus('Composer not initialized.');
-                    return;
-                }
-                
-                // Use AI-generated notes if available, otherwise use canvas notes
-                const notesToPlay = window._composerNotes || notes;
-                
-                if (!notesToPlay || notesToPlay.length === 0) {
-                    setStatus('No notes yet — click AI Generate or click canvas to add notes.');
-                    return;
-                }
-
-                // Ensure audio context is active and ready
-                if (!audioContext) {
-                    setStatus('Audio context not available.');
-                    return;
-                }
-                
-                if (audioContext.state === 'suspended') {
-                    // console.log('Resuming AudioContext...');
-                    try { 
-                        await audioContext.resume(); 
-                        // console.log('AudioContext resumed, state:', audioContext.state);
-                    } catch (resumeErr) {
-                        console.error('Resume failed:', resumeErr);
-                        setStatus('Failed to resume audio.');
-                        return;
-                    }
-                }
-                
-                // console.log('Building sequence with', notesToPlay.length, 'notes');
-                window.composer.clearSequence();
-                notesToPlay.forEach(note => {
-                    const frequency = 200 + (1 - note.y / canvas.height) * 600;
-                    const time = (note.x / canvas.width) * 4;
-                    window.composer.addNote(frequency, 0.3, time);
-                });
-                
-                console.log('Playing composition with', notesToPlay.length, 'notes');
-                // UI feedback during playback
-                setStatus(`Playing… ${notesToPlay.length} note${notesToPlay.length === 1 ? '' : 's'}`);
-                if (playBtn) playBtn.disabled = true;
-
-                // Estimate duration to re-enable - use notesToPlay not notes
-                const totalDuration = Math.max(0, ...notesToPlay.map(n => (n.x / canvas.width) * 4 + 0.3));
-                await window.composer.playSequence();
-                console.log('Play sequence complete');
-                reenableTimer = setTimeout(() => {
-                    setStatus(`Done. Notes: ${notesToPlay.length}`);
-                    if (playBtn) playBtn.disabled = false;
-                }, Math.ceil(totalDuration * 1000) + 50);
-                progressTracker.addAchievement('composed_music');
-            } catch (e) {
-                console.error('Play composition failed:', e);
-                setStatus('Playback failed — check console for details.');
-                if (playBtn) playBtn.disabled = false;
-            }
-        });
-        
-        stopBtn?.addEventListener('click', () => {
-            try {
-                if (!window.composer) return;
-                window.composer.stop();
-                if (reenableTimer) {
-                    clearTimeout(reenableTimer);
-                    reenableTimer = null;
-                }
-                if (playBtn) playBtn.disabled = false;
-                setStatus('Stopped.');
-            } catch (e) {
-                console.warn('Stop composition failed:', e);
-            }
-        });
-        
-        document.getElementById('clear-composition')?.addEventListener('click', () => {
-            notes = [];
-            drawGrid();
-            setStatus('Cleared. Click the canvas to add notes.');
-        });
-        
-        // Export MIDI button
-        document.getElementById('export-midi')?.addEventListener('click', () => {
-            try {
-                if (!window.composer || notes.length === 0) {
-                    setStatus('No composition to export.');
-                    showToast('warning', 'Create a composition first');
-                    return;
-                }
-                
-                // Build sequence for export
-                window.composer.clearSequence();
-                notes.forEach(note => {
-                    const frequency = 200 + (1 - note.y / canvas.height) * 600;
-                    const time = (note.x / canvas.width) * 4;
-                    window.composer.addNote(frequency, 0.3, time);
-                });
-                
-                const midiData = window.composer.exportToMIDI();
-                const blob = new Blob([midiData], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `composition-${Date.now()}.json`;
-                a.click();
-                URL.revokeObjectURL(url);
-                
-                setStatus('MIDI exported successfully!');
-                showToast('success', 'Composition exported as JSON');
-            } catch (err) {
-                console.error('Export failed:', err);
-                setStatus('Export failed.');
-                showToast('error', 'Export failed: ' + err.message);
-            }
-        });
-    }
-    
-    // Loop controls
-    document.getElementById('record-loop')?.addEventListener('click', () => {
-        showToast('info', 'Loop recording feature coming soon');
-    });
-    
-    document.getElementById('stop-loop')?.addEventListener('click', () => {
-        showToast('info', 'Loop stopped');
-    });
-    
-    document.getElementById('play-loops')?.addEventListener('click', () => {
-        showToast('info', 'Play loops feature coming soon');
-    });
-    
-    document.getElementById('clear-loops')?.addEventListener('click', () => {
-        document.getElementById('loop-display').innerHTML = '<p>Loops cleared</p>';
-    });
-}
-
-
-// Play mixed scale demonstration - GLOBAL FUNCTION
-window.playMixedScale = function(culture1Id, culture2Id) {
-    const basicCultures = getAllCultures();
-    const culture1 = basicCultures.find(c => c.id === culture1Id);
-    const culture2 = basicCultures.find(c => c.id === culture2Id);
-    
-    if (!culture1 || !culture2 || !audioContext) return;
-    
-    // Create a blended scale by combining both culture scales
-    const scaleNotes = ['C4', 'D4', 'E4', 'F4', 'G4', 'A4', 'B4', 'C5'];
-    const currentTime = audioContext.currentTime;
-    
-    // Play culture 1 scale
-    scaleNotes.forEach((note, i) => {
-        playNote(noteToFrequency(note), currentTime + i * 0.4, 0.3);
-    });
-    
-    // Play culture 2 scale offset
-    scaleNotes.forEach((note, i) => {
-        playNote(noteToFrequency(note), currentTime + (i + 0.2) * 0.4, 0.3);
-    });
-};
-
-// Progress Tracker
-// Global progress interval tracker
-let progressInterval = null;
-
-function initializeProgress() {
-    updateProgressDisplay();
-    displayGlossary();
-    
-    // Clear any existing interval
-    if (progressInterval) {
-        clearInterval(progressInterval);
-        progressInterval = null;
-    }
-    
-    // Only update progress periodically while a session is active and the Progress tab is visible
-    if (dashboardSession) {
-        progressInterval = setInterval(() => {
-            if (!dashboardSession) {
-                clearInterval(progressInterval);
-                progressInterval = null;
-                return;
-            }
-            const progressTab = document.getElementById('progress-tab');
-            if (progressTab?.classList.contains('active')) {
-                updateProgressDisplay();
-            }
-        }, 5000);
-    }
-    
-    function updateProgressDisplay() {
-        const levelEl = document.getElementById('user-level');
-        const xpEl = document.getElementById('current-xp');
-        const nextXpEl = document.getElementById('next-level-xp');
-        const xpFillEl = document.getElementById('xp-fill');
-        
-        if (levelEl) levelEl.textContent = progressTracker.level;
-        if (xpEl) xpEl.textContent = progressTracker.xp;
-        if (nextXpEl) nextXpEl.textContent = progressTracker.level * 100;
-        if (xpFillEl) {
-            const xpPercent = (progressTracker.xp / (progressTracker.level * 100)) * 100;
-            xpFillEl.style.width = xpPercent + '%';
-        }
-        
-        // Badges
-        const badgesGrid = document.getElementById('badges-grid');
-        if (badgesGrid) {
-            badgesGrid.innerHTML = '';
-            progressTracker.getBadges().forEach(badge => {
-                const div = document.createElement('div');
-                div.className = 'badge-item';
-                div.innerHTML = `<div class="badge-icon">${badge.icon}</div><div>${badge.name}</div>`;
-                badgesGrid.appendChild(div);
-            });
-        }
-    }
-}
-
-function displayGlossary() {
-    const glossaryContent = document.getElementById('glossary-content');
-    if (!glossaryContent) return;
-    
-    Object.entries(musicalGlossary).forEach(([term, definition]) => {
-        const div = document.createElement('div');
-        div.className = 'glossary-item';
-        div.innerHTML = `
-            <div class="glossary-term">${term}</div>
-            <div class="glossary-definition">${definition}</div>
-        `;
-        glossaryContent.appendChild(div);
-    });
-}
-
-// Dark Mode
+/* =========================
+   Dark Mode (menu + FAB)
+========================= */
 function initializeDarkMode() {
-    const darkModeBtn = document.getElementById('dark-mode-toggle');
-    if (!darkModeBtn) return;
-    
-    const savedMode = localStorage.getItem('darkMode');
-    if (savedMode === 'true') {
-        document.body.classList.add('dark-mode');
-        darkModeBtn.textContent = '☀️';
-        isDarkMode = true;
+  const btnMenu = $('#dark-mode-toggle-menu');
+  const btnFab = $('#dark-mode-toggle-fab');
+
+  let isDark = localStorage.getItem('darkMode') === 'true';
+
+  function apply() {
+    document.body.classList.toggle('dark-mode', isDark);
+    if (btnMenu) btnMenu.innerHTML = isDark ? '<span>☀️</span> Light Mode' : '<span>🌙</span> Dark Mode';
+    if (btnFab) btnFab.textContent = isDark ? '☀️' : '🌙';
+    localStorage.setItem('darkMode', String(isDark));
+  }
+
+  on(btnMenu, 'click', () => { isDark = !isDark; apply(); });
+  on(btnFab, 'click', () => { isDark = !isDark; apply(); });
+
+  apply();
+}
+
+/* =========================
+   Classroom Mode (volume cap)
+========================= */
+function initializeClassroomMode() {
+  const toggle = $('#classroom-mode-toggle');
+  let enabled = localStorage.getItem('classroomMode') === 'true';
+
+  function apply() {
+    document.body.classList.toggle('classroom-mode', enabled);
+    // cap master gain if available
+    if (window.__MASTER_GAIN) window.__MASTER_GAIN.gain.value = enabled ? 0.18 : 0.35;
+    if (toggle) toggle.textContent = enabled ? '🏫 On' : '🏫 Classroom Mode';
+    localStorage.setItem('classroomMode', String(enabled));
+  }
+
+  on(toggle, 'click', () => { enabled = !enabled; apply(); });
+  apply();
+}
+
+/* =========================
+   Audio unlock overlay (mobile autoplay restrictions)
+========================= */
+function initializeAudioUnlockOverlay() {
+  const overlay = $('#audio-unlock-overlay');
+  const btn = $('#audio-unlock-button');
+  const status = $('#audio-status');
+  if (!overlay || !btn) return;
+
+  // Show overlay if audio is locked (heuristic)
+  const shouldShow = true; // You can refine this check if you want
+  if (shouldShow) {
+    overlay.style.display = 'flex';
+  }
+
+  on(btn, 'click', async () => {
+    try {
+      setText(status, 'Unlocking audio…');
+      await resumeAudioIfNeeded();
+      overlay.style.display = 'none';
+      setText(status, '');
+    } catch (e) {
+      console.error(e);
+      setText(status, 'Could not enable audio on this device.');
     }
-    
-    darkModeBtn.addEventListener('click', () => {
-        isDarkMode = !isDarkMode;
-        document.body.classList.toggle('dark-mode');
-        darkModeBtn.textContent = isDarkMode ? '☀️' : '🌙';
-        localStorage.setItem('darkMode', isDarkMode);
-    });
+  });
 }
 
-// Display all 16 expanded cultures
-function displayExpandedCultures() {
-    const expandedCultures = getAllExpandedCultures();
-    // console.log(`Loaded ${expandedCultures.length} expanded cultures`);
-    
-    // These are already displayed in culture grid by initializeCultureExplorer
-    // Add audio sample and video functionality
-    expandedCultures.forEach(culture => {
-        if (culture.audioSample) {
-            // console.log(`Audio sample available for ${culture.name}: ${culture.audioSample}`);
-        }
-        if (culture.videoTutorial) {
-            // console.log(`Video tutorial available for ${culture.name}: ${culture.videoTutorial}`);
-        }
-    });
+/* =========================
+   Leaflet world map init hook
+   (expects you have initWorldMap() elsewhere)
+========================= */
+function initializeWorldMapSafe() {
+  const mapEl = $('#world-map');
+  if (!mapEl) return;
+
+  try {
+    if (typeof window.initializeWorldMap === 'function') {
+      window.initializeWorldMap(); // your existing map function
+    } else if (typeof window.initWorldMap === 'function') {
+      window.initWorldMap();
+    } else {
+      console.warn('No world map initializer found (initializeWorldMap / initWorldMap).');
+    }
+  } catch (e) {
+    console.error('World map init failed:', e);
+    mapEl.innerHTML = '<p style="padding: 20px; background: #ffecec; border: 1px solid #f5c2c2; border-radius: 8px; color: #c0392b;">Map could not load.</p>';
+  }
 }
 
-// Extended Quiz with 20 questions
-function initializeExtendedQuiz() {
-    const extendedQuizBtn = document.getElementById('start-extended-quiz');
-    if (!extendedQuizBtn) return;
-    
-    extendedQuizBtn.addEventListener('click', () => {
-        trackDashboardActivity('quiz');
-        const questions = getRandomQuestions(10);
-        let currentQ = 0;
-        let score = 0;
-        
-        const container = document.createElement('div');
-        container.className = 'extended-quiz-container';
-        container.style.cssText = 'padding: 20px; background: white; border-radius: 10px; margin: 20px 0;';
-        
-        function showQuestion() {
-            if (currentQ >= questions.length) {
-                container.innerHTML = `
-                    <h3>Quiz Complete!</h3>
-                    <p>Score: ${score}/${questions.length} (${((score/questions.length)*100).toFixed(0)}%)</p>
-                    <button class="btn-primary" onclick="location.reload()">Try Again</button>
-                `;
-                progressTracker.addXP(score * 10);
-                if (score === questions.length) {
-                    progressTracker.addAchievement('perfect_quiz');
-                }
-                return;
-            }
-            
-            const q = questions[currentQ];
-            container.innerHTML = `
-                <h4>Question ${currentQ + 1}/${questions.length}</h4>
-                <p style="font-size: 1.1em; margin: 20px 0;">${q.question}</p>
-                <div class="difficulty-badge" style="display: inline-block; padding: 5px 10px; background: ${q.difficulty === 'easy' ? '#4caf50' : q.difficulty === 'medium' ? '#ff9800' : '#f44336'}; color: white; border-radius: 5px; margin-bottom: 15px;">
-                    ${q.difficulty.toUpperCase()}
-                </div>
-                ${q.options.map((opt, i) => `
-                    <button class="btn-primary quiz-option" data-index="${i}" style="display: block; width: 100%; margin: 10px 0; padding: 15px; text-align: left;">
-                        ${opt}
-                    </button>
-                `).join('')}
-            `;
-            
-            container.querySelectorAll('.quiz-option').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    const answer = parseInt(e.target.dataset.index);
-                    const correct = answer === q.correct;
-                    
-                    if (correct) {
-                        score++;
-                        e.target.style.background = '#4caf50';
-                        e.target.innerHTML += ' ✓';
-                    } else {
-                        e.target.style.background = '#f44336';
-                        e.target.innerHTML += ' ✗';
-                        container.querySelectorAll('.quiz-option')[q.correct].style.background = '#4caf50';
-                    }
-                    
-                    container.querySelectorAll('.quiz-option').forEach(b => b.disabled = true);
-                    
-                    setTimeout(() => {
-                        currentQ++;
-                        showQuestion();
-                    }, 1500);
-                });
-            });
-        }
-        
-        extendedQuizBtn.parentNode.appendChild(container);
-        extendedQuizBtn.style.display = 'none';
-        showQuestion();
-    });
+/* =========================
+   Analyze tab (upload + decode + analyze)
+   Requires your existing audioAnalyzer + analyzeAudioFile()
+========================= */
+async function decodeAudioBuffer(arrayBuffer, file, audioCtx) {
+  const bufferCopy = arrayBuffer.slice(0);
+
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('Audio decode timeout after 8 seconds')), 8000)
+  );
+
+  const decodePromise = new Promise(async (resolve, reject) => {
+    try {
+      const decoded = await audioCtx.decodeAudioData(bufferCopy);
+      resolve(decoded);
+    } catch (err) {
+      reject(err);
+    }
+  });
+
+  return Promise.race([decodePromise, timeout]);
 }
 
-// Lesson Plans for Educators
-function initializeLessonPlans() {
-    const lessonsContainer = document.getElementById('lesson-plans-container');
-    if (!lessonsContainer) return;
-    
-    lessonPlans.forEach(lesson => {
-        const lessonCard = document.createElement('div');
-        lessonCard.className = 'lesson-card';
-        lessonCard.style.cssText = 'background: white; padding: 20px; margin: 15px 0; border-radius: 10px; border-left: 5px solid #667eea;';
-        
-        lessonCard.innerHTML = `
-            <h3>${lesson.title}</h3>
-            <p><strong>Grade Level:</strong> ${lesson.grade} | <strong>Duration:</strong> ${lesson.duration}</p>
-            
-            <h4>Learning Objectives:</h4>
-            <ul>
-                ${lesson.objectives.map(obj => `<li>${obj}</li>`).join('')}
-            </ul>
-            
-            <h4>Activities:</h4>
-            <ol>
-                ${lesson.activities.map(act => `<li>${act}</li>`).join('')}
-            </ol>
-            
-            <p><strong>Assessment:</strong> ${lesson.assessment}</p>
-            <p><strong>Extensions:</strong> ${lesson.extensions}</p>
-            
-            <div style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
-                <button class="btn-primary download-lesson-pdf">📥 Download Lesson PDF</button>
-                <button class="btn-secondary download-worksheet">📝 Download Student Worksheet</button>
-            </div>
-        `;
-        
-        const downloadBtn = lessonCard.querySelector('.download-lesson-pdf');
-        if (downloadBtn) {
-            downloadBtn.addEventListener('click', () => downloadLessonPlan(lesson.title, lesson));
-        }
-        
-        const worksheetBtn = lessonCard.querySelector('.download-worksheet');
-        if (worksheetBtn) {
-            worksheetBtn.addEventListener('click', () => downloadWorksheet(lesson.title, lesson));
-        }
-        
-        lessonsContainer.appendChild(lessonCard);
-    });
+function initializeAnalyzer() {
+  const fileInput = $('#file-input');
+  const cancelBtn = $('#cancel-analysis');
+  const results = $('#analysis-results');
+
+  if (!fileInput || !results) return;
+
+  let analysisCancelled = false;
+
+  on(cancelBtn, 'click', () => {
+    analysisCancelled = true;
+    setAnalysisStatus('✖️ Analysis cancelled.', { bg: '#ffebee', color: '#b71c1c', border: '#f44336' });
+    hide(cancelBtn);
+  });
+
+  on(fileInput, 'change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    analysisCancelled = false;
+    show(cancelBtn);
+    show(results);
+
+    try {
+      setAnalysisStatus('🔄 LOADING FILE…', { bg: '#ffeb3b', color: '#000', border: '#fbc02d' });
+
+      // Validate size (100MB)
+      const maxSize = 100 * 1024 * 1024;
+      if (file.size > maxSize) throw new Error(`File too large: ${(file.size / 1024 / 1024).toFixed(1)}MB (max 100MB).`);
+
+      const ctx = ensureAudioContext();
+
+      setAnalysisStatus('🎵 DECODING AUDIO…', { bg: '#e1bee7', color: '#4a148c', border: '#6a1b9a' });
+
+      // Safari sometimes needs user gesture; we already provide overlay, but try resume anyway
+      if (ctx.state === 'suspended') {
+        try { await ctx.resume(); } catch {}
+      }
+
+      const arrayBuffer = await file.arrayBuffer();
+      if (analysisCancelled) throw new Error('Analysis cancelled');
+
+      const audioBuffer = await decodeAudioBuffer(arrayBuffer, file, ctx);
+      if (analysisCancelled) throw new Error('Analysis cancelled');
+
+      setAnalysisStatus('📊 STARTING ANALYSIS…', { bg: '#c8e6c9', color: '#1b5e20', border: '#4caf50' });
+
+      // Create playback player
+      const audioUrl = URL.createObjectURL(file);
+      const audioPlayer = document.createElement('audio');
+      audioPlayer.controls = true;
+      audioPlayer.src = audioUrl;
+      audioPlayer.style.width = '100%';
+      audioPlayer.style.marginBottom = '20px';
+
+      // If you have a dedicated slot, put it there; otherwise insert under status banner
+      const status = ensureAnalysisStatus();
+      if (status && !$('#analysis-audio-player')) {
+        const wrap = document.createElement('div');
+        wrap.id = 'analysis-audio-player';
+        wrap.style.cssText = 'margin: 0 0 14px; padding: 12px; background: #e3f2fd; border-radius: 10px; border-left: 4px solid #2196f3;';
+        wrap.innerHTML = '<h4 style="margin: 0 0 8px; color:#1565c0;">🔊 Audio Playback</h4>';
+        wrap.appendChild(audioPlayer);
+        status.insertAdjacentElement('afterend', wrap);
+      }
+
+      // Call your existing analysis function (must NOT wipe DOM)
+      if (typeof window.analyzeAudioFile !== 'function') {
+        throw new Error('analyzeAudioFile() not found. Make sure your analyzer code is loaded.');
+      }
+
+      await window.analyzeAudioFile(audioBuffer, file.name, audioPlayer);
+
+      setAnalysisStatus('✅ Analysis complete.', { bg: '#e8f5e9', color: '#1b5e20', border: '#4caf50' });
+      hide(cancelBtn);
+    } catch (err) {
+      console.error(err);
+      hide(cancelBtn);
+
+      // Friendly error message in status + leave charts/buttons intact
+      setAnalysisStatus(`❌ ${err.message}`, { bg: '#ffebee', color: '#b71c1c', border: '#f44336' });
+
+      // Optional tips block (no DOM wipe, just append/update)
+      let tips = $('#analysis-error-tips');
+      if (!tips) {
+        tips = document.createElement('div');
+        tips.id = 'analysis-error-tips';
+        tips.style.cssText = 'margin-top: 12px; padding: 12px; border-radius: 10px; background:#fff; border: 1px solid #f5c2c2;';
+        $('#analysis-status')?.insertAdjacentElement('afterend', tips);
+      }
+
+      tips.innerHTML = `
+        <div style="font-weight:700; color:#b71c1c; margin-bottom:6px;">Supported Formats & Fixes</div>
+        <ul style="margin: 0; padding-left: 18px; line-height: 1.6; color:#333;">
+          <li><b>Best:</b> WAV, OGG, FLAC</li>
+          <li><b>Limited:</b> MP3/M4A (depends on browser)</li>
+          <li>Try exporting as <b>PCM 16-bit WAV</b></li>
+          <li>Try a shorter clip (under 5 minutes)</li>
+        </ul>
+      `;
+    }
+  });
 }
 
-// Accessibility Features
-let accessibilityListenersInitialized = false;
+/* =========================
+   Download buttons (delegation)
+   Expects global chart instances + currentAnalysisData
+========================= */
+function setupDownloadButtonsOnce() {
+  if (setupDownloadButtonsOnce._done) return;
+  setupDownloadButtonsOnce._done = true;
 
-function initializeAccessibility() {
-    if (accessibilityListenersInitialized) return; // Only setup once
-    
-    // Toggle accessibility menu - using event delegation
-    document.addEventListener('click', (e) => {
-        const menuToggle = document.getElementById('accessibility-menu-toggle');
-        const menu = document.getElementById('accessibility-menu');
-        if (!menuToggle || !menu) return;
-        
-        if (e.target === menuToggle || menuToggle.contains(e.target)) {
-            menu.style.display = menu.style.display === 'none' ? 'grid' : 'none';
-            e.stopPropagation();
-        } else if (!menu.contains(e.target)) {
-            menu.style.display = 'none';
-        }
-    });
-    
-    // Text-to-speech toggle
-    document.addEventListener('click', (e) => {
-        if (e.target?.id === 'tts-toggle') {
-            const text = document.querySelector('.tab-content.active')?.innerText || 'Welcome to Computational Ethnomusicology App';
-            accessibilityHelpers.textToSpeech(text);
-        }
-    });
-    
-    // Font size controls
-    document.addEventListener('click', (e) => {
-        if (e.target?.id === 'increase-text') {
-            accessibilityHelpers.increaseTextSize();
-        } else if (e.target?.id === 'decrease-text') {
-            accessibilityHelpers.decreaseTextSize();
-        }
-    });
-    
-    // High contrast toggle
-    let isHighContrast = false;
-    document.addEventListener('click', (e) => {
-        if (e.target?.id === 'high-contrast-toggle') {
-            isHighContrast = !isHighContrast;
-            accessibilityHelpers.highContrast(isHighContrast);
-            e.target.innerHTML = isHighContrast ? '<span>◐</span> Normal' : '<span>◐</span> High Contrast';
-        }
-    });
-    
-    accessibilityListenersInitialized = true;
+  on(document, 'click', (e) => {
+    const id = e.target?.id;
+    if (!id) return;
+
+    if (id === 'download-pitch-chart') return window.downloadChart?.(window.pitchChart, 'pitch-analysis.png');
+    if (id === 'download-rhythm-chart') return window.downloadChart?.(window.rhythmChart, 'rhythm-analysis.png');
+    if (id === 'download-spectral-chart') return window.downloadChart?.(window.spectralChart, 'spectral-analysis.png');
+    if (id === 'download-analysis-data') return window.downloadJSON?.(window.currentAnalysisData, 'music-analysis-data.json');
+    if (id === 'download-full-report') return window.generateAnalysisReport?.();
+  });
 }
 
+/* =========================
+   Boot
+========================= */
+function boot() {
+  // Core UI
+  initializeTabs();
+  initializeAccessibilityMenu();
+  initializeDarkMode();
+  initializeClassroomMode();
+  initializeAudioUnlockOverlay();
 
+  // Features
+  initializeWorldMapSafe();
+  initializeAnalyzer();
+  setupDownloadButtonsOnce();
+
+  // Optional: call your other initializers if present
+  if (typeof window.initializeGames === 'function') window.initializeGames();
+  if (typeof window.initializeRecorder === 'function') window.initializeRecorder();
+  if (typeof window.initializeLivePitch === 'function') window.initializeLivePitch();
+  if (typeof window.initializeComposer === 'function') window.initializeComposer();
+  if (typeof window.initializeLessonPlans === 'function') window.initializeLessonPlans();
+  if (typeof window.initializeProgress === 'function') window.initializeProgress();
+
+  // Glossary if you use the new IDs
+  if (typeof window.displayGlossary === 'function') window.displayGlossary();
+}
+
+document.addEventListener('DOMContentLoaded', boot);
