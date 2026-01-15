@@ -437,7 +437,9 @@ export class AudioAnalyzer {
         const sr = sampleRate || (this.audioContext ? this.audioContext.sampleRate : 44100);
         // Calculate average interval deterministically (remove prior random variation)
         const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-        const tempo = avgInterval > 0 ? 60000 / (avgInterval * 1000 / sr) : 0;
+        // avgInterval is in samples. Convert to seconds, then to BPM
+        // BPM = 60 / (interval in seconds) = 60 / (samples / sampleRate) = 60 * sampleRate / samples
+        const tempo = avgInterval > 0 ? (60 * sr) / avgInterval : 0;
         
         return {
             tempo: Math.round(Math.max(0, tempo)),
@@ -958,11 +960,113 @@ export class AudioAnalyzer {
     }
 
     /**
-     * Genre classification based on musical features
+     * Genre BPM ranges: defines valid tempo ranges for each genre
+     * Used for genre-aware tempo interpretation and octave error detection
+     */
+    getGenreBPMRanges() {
+        return {
+            'European Classical': { min: 40, max: 160, ideal: 90 },
+            'Indian Classical': { min: 40, max: 180, ideal: 100 },
+            'Jazz': { min: 60, max: 200, ideal: 120 },
+            'Rock': { min: 100, max: 200, ideal: 140 },
+            'Electronic': { min: 80, max: 180, ideal: 130 },
+            'Blues': { min: 60, max: 140, ideal: 100 },
+            'Folk': { min: 80, max: 140, ideal: 105 },
+            'Hip Hop': { min: 85, max: 160, ideal: 95 },
+            'Latin': { min: 85, max: 180, ideal: 110 },
+            'Metal': { min: 140, max: 220, ideal: 170 },
+            'Pop': { min: 90, max: 150, ideal: 120 },
+            'Reggae': { min: 75, max: 110, ideal: 95 },
+            'Country': { min: 80, max: 140, ideal: 105 },
+            'R&B/Soul': { min: 70, max: 130, ideal: 100 },
+            'World': { min: 60, max: 180, ideal: 110 }
+        };
+    }
+
+    /**
+     * Detect and correct possible BPM octave errors (e.g., detected at 2x or 0.5x actual)
+     * Returns corrected BPM and confidence score
+     */
+    detectBPMOctaveError(detectedBPM, genres) {
+        // If detected BPM is exactly double or half what would be reasonable for detected genres
+        const topGenre = Object.entries(genres)
+            .sort(([,a], [,b]) => b - a)[0]?.[0];
+        
+        if (!topGenre) return { bpm: detectedBPM, correction: null, confidence: 1.0 };
+        
+        const ranges = this.getGenreBPMRanges();
+        const range = ranges[topGenre];
+        if (!range) return { bpm: detectedBPM, correction: null, confidence: 1.0 };
+
+        // Check if half-tempo is more reasonable
+        const halfTempo = detectedBPM * 0.5;
+        const doubleTempo = detectedBPM * 2;
+        const inHalfRange = halfTempo >= range.min && halfTempo <= range.max;
+        const inDoubleRange = doubleTempo >= range.min && doubleTempo <= range.max;
+        const inOriginalRange = detectedBPM >= range.min && detectedBPM <= range.max;
+
+        // If half-tempo fits perfectly and original doesn't, correct it
+        if (inHalfRange && !inOriginalRange) {
+            return { bpm: halfTempo, correction: '0.5x', confidence: 0.85 };
+        }
+        // If double-tempo fits and original doesn't (rare but possible), correct it
+        if (inDoubleRange && !inOriginalRange) {
+            return { bpm: doubleTempo, correction: '2x', confidence: 0.70 };
+        }
+        // Original tempo is valid
+        return { bpm: detectedBPM, correction: null, confidence: inOriginalRange ? 1.0 : 0.75 };
+    }
+
+    /**
+     * Genre profile: defines how to weight features for adaptive classification
+     * Allows different genres to be "sensitive" to different features
+     */
+    getGenreProfile(genreName) {
+        const profiles = {
+            'Folk': { tempo: 1.2, regularity: 0.8, brightness: 1.0, complexity: 0.9, polyrhythmic: 0.7 },
+            'Country': { tempo: 1.1, regularity: 0.9, brightness: 1.1, complexity: 0.8, polyrhythmic: 0.5 },
+            'World': { tempo: 1.0, regularity: 0.6, brightness: 0.9, complexity: 1.2, polyrhythmic: 1.3 },
+            'Reggae': { tempo: 1.3, regularity: 0.4, brightness: 1.0, complexity: 0.7, polyrhythmic: 0.8 },
+            'Jazz': { tempo: 1.0, regularity: 0.5, brightness: 0.95, complexity: 1.4, polyrhythmic: 1.2 },
+            'Blues': { tempo: 0.9, regularity: 0.7, brightness: 0.7, complexity: 1.0, polyrhythmic: 0.6 },
+            'Rock': { tempo: 1.2, regularity: 1.0, brightness: 1.1, complexity: 1.0, polyrhythmic: 0.8 },
+            'Pop': { tempo: 1.0, regularity: 1.1, brightness: 1.2, complexity: 0.7, polyrhythmic: 0.4 },
+            'Electronic': { tempo: 1.1, regularity: 1.3, brightness: 1.1, complexity: 0.9, polyrhythmic: 0.5 },
+            'Hip Hop': { tempo: 0.95, regularity: 0.9, brightness: 1.0, complexity: 1.1, polyrhythmic: 0.7 },
+            'Metal': { tempo: 1.3, regularity: 1.0, brightness: 1.3, complexity: 1.2, polyrhythmic: 0.9 },
+            'European Classical': { tempo: 0.8, regularity: 1.2, brightness: 0.9, complexity: 1.3, polyrhythmic: 0.3 },
+            'Indian Classical': { tempo: 0.9, regularity: 0.4, brightness: 0.85, complexity: 1.5, polyrhythmic: 1.1 },
+            'Latin': { tempo: 1.1, regularity: 0.85, brightness: 1.0, complexity: 1.2, polyrhythmic: 1.4 },
+            'R&B/Soul': { tempo: 0.85, regularity: 0.95, brightness: 0.85, complexity: 1.0, polyrhythmic: 0.7 }
+        };
+        return profiles[genreName] || { tempo: 1.0, regularity: 1.0, brightness: 1.0, complexity: 1.0, polyrhythmic: 1.0 };
+    }
+
+    /**
+     * Detect genre blends: when top 2-3 genres score similarly, return blend
+     * e.g., "Jazz-Rock", "World-Latin", "Electronica-Folk"
+     */
+    detectGenreBlend(topGenres, scores, threshold = 0.15) {
+        if (topGenres.length < 2) return null;
+        
+        // Check if top 2 genres are close in score (within threshold)
+        const scoreDiff = scores[0] - scores[1];
+        const maxScore = scores[0];
+        const diffRatio = scoreDiff / maxScore;
+        
+        if (diffRatio < threshold) {
+            // Create blend name
+            return `${topGenres[0]}-${topGenres[1]}`;
+        }
+        return null;
+    }
+
+    /**
+     * Genre classification based on musical features with multi-genre support
      * @param {Object} rhythmAnalysis - Rhythm analysis results
      * @param {Object} scaleAnalysis - Scale detection results
      * @param {Object} spectralAnalysis - Spectral features
-     * @returns {Promise<Array>} Sorted array of genre predictions with confidence scores
+     * @returns {Promise<Array>} Sorted array of genre predictions with confidence scores (top 3-5 genres or blends)
      */
     async classifyGenre(rhythmAnalysis, scaleAnalysis, spectralAnalysis, essentiaFeatures = null, options = {}) {
         const { mlWeight = 0.2 } = options || {};
@@ -992,7 +1096,7 @@ export class AudioAnalyzer {
         };
 
         // Sanitize inputs with safe defaults
-        const tempo = safeNum(rhythmAnalysis?.tempo, 0);
+        let tempo = safeNum(rhythmAnalysis?.tempo, 0);
         const regularity = clamp01(rhythmAnalysis?.regularity);
         const brightness = clamp01(spectralAnalysis?.brightness);
         const percussiveness = clamp01(rhythmAnalysis?.percussiveness);
@@ -1003,9 +1107,26 @@ export class AudioAnalyzer {
         const spectralCentroid = safeNum(spectralAnalysis?.centroid, 0);
         const tuning = (options && options.tuning) || 'stable';
 
+        // ===== EARLY BPM OCTAVE ERROR DETECTION =====
+        // Check if tempo is suspiciously high and likely a 2x error (before any genre scoring)
+        // This is a quick pre-check: if tempo > 170 and looks like metal when everything else suggests slow genre
+        let tempoOriginal = tempo;
+        let tempoCorrectionApplied = null;
+        
+        if (tempo > 160) {
+            // Very high tempo - likely a doubling error. Test if half-tempo is more reasonable
+            const halfTempo = tempo * 0.5;
+            // Quick heuristic: if low percussiveness + low regularity + low complexity, probably should be slower
+            if (percussiveness < 0.1 && regularity < 0.3 && complexity < 0.4) {
+                tempo = halfTempo;
+                tempoCorrectionApplied = '2x_early';
+                console.log(`⚠️ EARLY BPM CORRECTION: ${tempoOriginal} BPM detected as likely 2x error → testing ${halfTempo} BPM`);
+            }
+        }
+
         // ALWAYS log input features for debugging
         console.log('=== GENRE CLASSIFIER INPUT ===');
-        console.log('Tempo:', tempo, 'BPM');
+        console.log('Tempo:', tempo, 'BPM' + (tempoCorrectionApplied ? ` (corrected from ${tempoOriginal})` : ''));
         console.log('Regularity:', (regularity * 100).toFixed(1), '%');
         console.log('Brightness:', (brightness * 100).toFixed(1), '%');
         console.log('Percussiveness:', (percussiveness * 100).toFixed(1), '%');
@@ -1505,8 +1626,55 @@ export class AudioAnalyzer {
             }
         }
 
+        // ===== ADAPTIVE FEATURE WEIGHTING =====
+        // Apply genre-specific feature sensitivities to refine scoring
+        // This allows genres to be "tuned" to their characteristic features
+        console.log('=== APPLYING ADAPTIVE GENRE WEIGHTING ===');
+        
+        const genreScoresBeforeAdaptive = { ...genres };
+        const adaptiveAdjustments = {};
+        
+        // For top candidates, apply genre profiles to boost/penalize based on feature match
+        const topThreeGenres = Object.entries(genres)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 3)
+            .map(([g]) => g);
+        
+        topThreeGenres.forEach(genreName => {
+            const profile = this.getGenreProfile(genreName);
+            let adjustment = 0;
+            
+            // Tempo alignment score (0-1)
+            const tempoRange = this.getGenreBPMRanges()[genreName];
+            const tempoAlignment = (tempo >= tempoRange.min && tempo <= tempoRange.max) ? 1.0 : 
+                                  Math.max(0, 1 - (Math.abs(tempo - tempoRange.ideal) / 100));
+            adjustment += (tempoAlignment - 0.5) * profile.tempo * 0.3;
+            
+            // Regularity alignment (some genres like electronic want high, others like jazz want low)
+            const targetRegularity = genreName === 'Electronic' ? 0.9 : genreName === 'Jazz' ? 0.3 : 0.6;
+            const regularityAlignment = 1 - Math.abs(regularity - targetRegularity);
+            adjustment += (regularityAlignment - 0.5) * profile.regularity * 0.25;
+            
+            // Polyrhythmic alignment
+            const polyAlignment = polyrhythmic ? 0.8 : 0.3;
+            adjustment += (polyAlignment - 0.5) * profile.polyrhythmic * 0.15;
+            
+            // Brightness alignment (genre-dependent)
+            const targetBrightness = (genreName === 'Pop' || genreName === 'Electronic') ? 0.8 : 
+                                    (genreName === 'Blues' || genreName === 'Folk') ? 0.3 : 0.5;
+            const brightnessAlignment = 1 - Math.abs(brightness - targetBrightness);
+            adjustment += (brightnessAlignment - 0.5) * profile.brightness * 0.2;
+            
+            adaptiveAdjustments[genreName] = adjustment;
+            genres[genreName] += adjustment;
+            
+            if (adjustment !== 0) {
+                console.log(`  ${genreName}: ${adjustment > 0 ? '+' : ''}${adjustment.toFixed(3)} (adaptive)`);
+            }
+        });
+
         // ALWAYS log raw scores for debugging
-        console.log('=== RAW GENRE SCORES (before normalization) ===');
+        console.log('=== RAW GENRE SCORES (after adaptive weighting) ===');
         const sortedByScore = Object.entries(genres).sort((a, b) => b[1] - a[1]);
         sortedByScore.forEach(([g, score]) => {
             console.log(`  ${g}: ${score.toFixed(3)}`);
@@ -1636,11 +1804,11 @@ export class AudioAnalyzer {
             .slice(0, 5)
             .map(({ genre, confidence }) => ({ genre, confidence }));
 
-        // If we filtered too aggressively (e.g., only one survives), rebuild a top-3 list
+        // If we filtered too aggressively (e.g., only one survives), rebuild a top-5 list
         if (results.length < 3) {
             const scored = Object.entries(genres).map(([genre, score]) => ({ genre, score }));
             scored.sort((a, b) => b.score - a.score);
-            const top = scored.slice(0, 3);
+            const top = scored.slice(0, 5);
             const positiveSum = top.reduce((s, t) => s + Math.max(0, t.score), 0);
             if (positiveSum > 0) {
                 results = top.map(t => ({
@@ -1675,8 +1843,42 @@ export class AudioAnalyzer {
                 results = top.map(t => ({
                     genre: t.genre,
                     confidence: maxScore > 0 ? Math.round((t.score / maxScore) * 100) : (t === top[0] ? 100 : 0)
-                })).slice(0, 3);
+                })).slice(0, 5);
             }
+        }
+
+        // ===== MULTI-GENRE BLEND DETECTION =====
+        // Detect if top genres are close in score → blend them
+        const topGenresList = results.slice(0, 3).map(r => r.genre);
+        const topScores = results.slice(0, 3).map(r => r.confidence);
+        const blendName = this.detectGenreBlend(topGenresList, topScores, 0.20); // 20% threshold
+        
+        if (blendName && results.length >= 2) {
+            console.log(`🎭 GENRE BLEND DETECTED: ${blendName}`);
+            // Replace top result with blend, keeping other scores
+            const blendConfidence = Math.round((results[0].confidence + results[1].confidence) / 2);
+            results = [
+                { genre: blendName, confidence: blendConfidence },
+                ...results.slice(2)
+            ].slice(0, 5);
+        }
+
+        // ===== GENRE-AWARE BPM INTERPRETATION =====
+        // Detect and correct possible BPM octave errors
+        const bpmCorrection = this.detectBPMOctaveError(tempo, genres);
+        const correctedTempo = bpmCorrection.bpm;
+        
+        if (bpmCorrection.correction) {
+            console.log(`⚠️ BPM CORRECTION: Detected ${tempo} BPM → ${correctedTempo} BPM (${bpmCorrection.correction})`);
+            console.log(`   Primary genre: ${results[0].genre}, valid range: ${this.getGenreBPMRanges()[results[0].genre]?.min || '?'}-${this.getGenreBPMRanges()[results[0].genre]?.max || '?'} BPM`);
+        }
+
+        // Validate BPM against detected primary genre
+        const primaryGenre = results[0]?.genre?.split('-')[0]; // Get base genre if it's a blend
+        const genreRange = this.getGenreBPMRanges()[primaryGenre];
+        if (genreRange) {
+            const isBPMValid = correctedTempo >= genreRange.min && correctedTempo <= genreRange.max;
+            console.log(`✓ BPM Validation: ${correctedTempo} BPM is ${isBPMValid ? 'VALID' : 'unusual'} for ${primaryGenre} (range: ${genreRange.min}-${genreRange.max} BPM)`);
         }
 
         // If ML is trained, override final results with ML predictions (keep heuristics for debug)
@@ -1686,11 +1888,13 @@ export class AudioAnalyzer {
                 .map(p => ({ genre: p.genre, confidence: Math.round((p.confidence || 0) * 100) }));
             if (top.length > 0) {
                 results = top;
+                console.log('⚡ ML override applied - using trained model predictions');
             }
         }
 
         console.log('=== FINAL GENRE RESULTS ===');
         if (mlOverride) console.log('[Mode] ML override (trained model)');
+        if (bpmCorrection.correction) console.log(`[BPM Correction] ${tempo}→${correctedTempo} BPM (${bpmCorrection.correction})`);
         results.forEach((r, i) => {
             console.log(`${i + 1}. ${r.genre}: ${r.confidence}%`);
         });
@@ -1698,7 +1902,9 @@ export class AudioAnalyzer {
         // Attach debug metadata without breaking array API
         try {
             results.__debug = {
-                input: { tempo, regularity, brightness, percussiveness, complexity, polyrhythmic, scale, spectralCentroid },
+                input: { tempoDetected: tempoOriginal, tempoAfterEarlyCorrection: tempo, tempoCorrected: correctedTempo, regularity, brightness, percussiveness, complexity, polyrhythmic, scale, spectralCentroid },
+                earlyCorrection: tempoCorrectionApplied,
+                tempoCorrection: bpmCorrection,
                 bufferHash: essentiaFeatures?.sourceHash || null,
                 rawScores: rawScoresObj,
                 total,
@@ -1712,7 +1918,8 @@ export class AudioAnalyzer {
                     confidence: (mlPrediction.confidence * 100).toFixed(1),
                     modelTrained: true
                 } : { modelTrained: false }),
-                mode: mlOverride ? 'ML_OVERRIDE' : 'HEURISTIC', // expose mode in debug
+                blendDetected: !!blendName,
+                mode: mlOverride ? 'ML_OVERRIDE' : 'HEURISTIC_ADAPTIVE', // expose mode in debug
                 runId: options?.runId || null
             };
             results.__ml = !!(mlGenrePredictionForDebug || mlPrediction);
