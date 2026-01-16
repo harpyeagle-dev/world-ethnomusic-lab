@@ -426,33 +426,66 @@ function initializeDownloadsOnce() {
    IMPORTANT: We only “call if exists”.
    That means your existing app logic stays the boss.
 --------------------------- */
+/* ---------------------------
+   Boot
+   IMPORTANT: We only "call if exists".
+   That means your existing app logic stays the boss.
+--------------------------- */
 function boot() {
-  // UI
-  initializeTabs();
+  // Detect which page we're on
+  const currentPage = window.location.pathname.split('/').pop() || 'index.html';
+  
+  // Core UI (safe for all pages)
+  if ($('.nav-tabs')) {
+    initializeTabs();
+  }
   initializeAccessibilityMenu();
   initializeDarkMode();
   initializeClassroomMode();
   initializeAudioUnlockOverlay();
 
-  // Features
-  initializeWorldMapSafe();
-  initializeAnalyzeUpload();
-  initializeDownloadsOnce();
-
-  // Your modules (only if they exist)
-  safeCall(window.initializeGames);
-  safeCall(window.initializeRecorder);
-  safeCall(window.initializeLivePitch);
-  safeCall(window.initializeComposer);
-  safeCall(window.initializeLessonPlans);
-  safeCall(window.initializeProgress);
-
-  // Display content
-  safeCall(window.displayGlossary);
-  safeCall(window.displayCultures);
-
-  // Final sanity: expose analyzer globals once more after other scripts run
-  ensureAnalyzerGlobals();
+  // Page-specific initialization
+  if (currentPage === 'index.html' || currentPage === '' || currentPage === '/') {
+    // Landing page - minimal initialization
+    console.log('Landing page loaded');
+  } else if (currentPage === 'explore.html') {
+    // Explore page - map and cultures
+    initializeWorldMapSafe();
+    safeCall(window.displayGlossary);
+    safeCall(window.displayCultures);
+  } else if (currentPage === 'analyze.html') {
+    // Analyze page - audio upload and analysis
+    initializeAnalyzeUpload();
+    initializeDownloadsOnce();
+    ensureAnalyzerGlobals();
+  } else if (currentPage === 'learn.html') {
+    // Learn page - games
+    safeCall(window.initializeGames);
+    safeCall(window.displayGlossary);
+  } else if (currentPage === 'create.html') {
+    // Create page - composition tools
+    safeCall(window.initializeComposer);
+    safeCall(window.initializeRecorder);
+    safeCall(window.initializeLivePitch);
+  } else if (currentPage === 'educators.html') {
+    // Educators page - lesson plans
+    safeCall(window.initializeLessonPlans);
+    safeCall(window.initializeProgress);
+  } else {
+    // Fallback for old single-page version or unknown pages
+    initializeWorldMapSafe();
+    initializeAnalyzeUpload();
+    initializeDownloadsOnce();
+    safeCall(window.initializeGames);
+    safeCall(window.initializeRecorder);
+    safeCall(window.initializeLivePitch);
+    safeCall(window.initializeComposer);
+    safeCall(window.initializeLessonPlans);
+    safeCall(window.initializeProgress);
+    safeCall(window.displayGlossary);
+    safeCall(window.displayCultures);
+    ensureAnalyzerGlobals();
+  }
 }
 
 document.addEventListener('DOMContentLoaded', boot);
