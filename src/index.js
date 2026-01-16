@@ -13,11 +13,12 @@
 import './styles.css';
 
 // Import modules to ensure they register their global functions
-import { initializeWorldMap } from './advancedFeatures.js';
+import { initializeWorldMap, displayGlossary } from './advancedFeatures.js';
 import { analyzeAudioFile } from './audioAnalyzer.js';
 
 // Ensure functions are available on window immediately after import
 window.initializeWorldMap = window.initializeWorldMap || initializeWorldMap;
+window.displayGlossary = window.displayGlossary || displayGlossary;
 window.analyzeAudioFile = window.analyzeAudioFile || analyzeAudioFile;
 
 'use strict';

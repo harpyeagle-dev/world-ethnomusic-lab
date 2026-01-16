@@ -409,5 +409,30 @@ export function initializeWorldMap() {
     }
 }
 
-// Make it globally available
+// Music Glossary Display Function
+export function displayGlossary() {
+    const glossaryContainers = document.querySelectorAll('[id^="glossary-content-"]');
+    
+    glossaryContainers.forEach(container => {
+        if (!container) return;
+        
+        container.innerHTML = '';
+        container.className = 'glossary-grid';
+        
+        Object.entries(musicalGlossary).forEach(([term, definition]) => {
+            const item = document.createElement('div');
+            item.className = 'glossary-item';
+            item.innerHTML = `
+                <div class="glossary-term">${term}</div>
+                <div class="glossary-definition">${definition}</div>
+            `;
+            container.appendChild(item);
+        });
+    });
+    
+    console.log('Musical glossary displayed');
+}
+
+// Make functions globally available
 window.initializeWorldMap = initializeWorldMap;
+window.displayGlossary = displayGlossary;

@@ -1932,29 +1932,50 @@ export class AudioAnalyzer {
     }
 }
 
-// Global function for analyzing audio files
+// Global function for analyzing audio files - simplified version
 export async function analyzeAudioFile(audioBuffer, fileName, audioPlayer) {
     try {
-        const analyzer = new AudioAnalyzer();
-        await analyzer.initialize();
+        console.log('Starting audio analysis for:', fileName);
         
-        // Extract features from the buffer
-        const basicFeatures = analyzer.extractBasicFeatures(audioBuffer);
-        const pitchData = analyzer.detectPitchEssentia(audioBuffer);
-        const rhythmData = analyzer.analyzeRhythmEssentia(audioBuffer);
+        // Simple feature extraction without needing class methods
+        if (!audioBuffer || !audioBuffer.getChannelData) {
+            throw new Error('Invalid audio buffer');
+        }
         
-        // Return comprehensive analysis
-        return {
+        // Extract audio data
+        const channelData = audioBuffer.getChannelData(0);
+        const sampleRate = audioBuffer.sampleRate;
+        
+        // Basic analysis
+        const duration = audioBuffer.duration;
+        const rms = calculateRMS(channelData);
+        const peakAmplitude = Math.max(...Array.from(channelData).map(Math.abs));
+        
+        const result = {
             fileName: fileName,
-            features: basicFeatures,
-            pitch: pitchData,
-            rhythm: rhythmData,
+            duration: duration,
+            sampleRate: sampleRate,
+            rms: rms,
+            peakAmplitude: peakAmplitude,
+            channels: audioBuffer.numberOfChannels,
             timestamp: new Date().toISOString()
         };
+        
+        console.log('Audio analysis complete:', result);
+        return result;
     } catch (error) {
         console.error('Error analyzing audio:', error);
         throw error;
     }
+}
+
+// Helper function to calculate RMS (Root Mean Square)
+function calculateRMS(channelData) {
+    let sum = 0;
+    for (let i = 0; i < channelData.length; i++) {
+        sum += channelData[i] * channelData[i];
+    }
+    return Math.sqrt(sum / channelData.length);
 }
 
 // Make it globally available
