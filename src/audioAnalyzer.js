@@ -1931,3 +1931,13 @@ export class AudioAnalyzer {
         return results;
     }
 }
+
+// Global function for analyzing audio files
+export async function analyzeAudioFile(audioBuffer, fileName, audioPlayer) {
+    const analyzer = new AudioAnalyzer();
+    await analyzer.initialize();
+    return analyzer.analyze(audioBuffer, fileName, audioPlayer);
+}
+
+// Make it globally available
+window.analyzeAudioFile = analyzeAudioFile;

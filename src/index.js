@@ -14,6 +14,7 @@ import './styles.css';
 
 // Import modules to ensure they register their global functions
 import { initializeWorldMap } from './advancedFeatures.js';
+import { analyzeAudioFile } from './audioAnalyzer.js';
 
 'use strict';
 
