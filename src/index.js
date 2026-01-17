@@ -211,16 +211,16 @@ function initializeAudioUnlockOverlay() {
    - window.initWorldMap()
    If they return/assign a Leaflet map, keep it in window.__WORLD_MAP
 --------------------------- */
-function initializeWorldMapSafe() {
+async function initializeWorldMapSafe() {
   const mapEl = $('#world-map');
   if (!mapEl) return;
 
   try {
     if (typeof window.initializeWorldMap === 'function') {
-      const m = window.initializeWorldMap();
+      const m = await window.initializeWorldMap();
       if (m) window.__WORLD_MAP = m;
     } else if (typeof window.initWorldMap === 'function') {
-      const m = window.initWorldMap();
+      const m = await window.initWorldMap();
       if (m) window.__WORLD_MAP = m;
     } else {
       // Don’t hard-fail — just warn (your old app may init elsewhere)
