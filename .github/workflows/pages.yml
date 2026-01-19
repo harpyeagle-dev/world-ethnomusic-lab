@@ -1,8 +1,7 @@
-name: Deploy to GitHub Pages
+name: Deploy to GitHub Pages (Disabled duplicate)
 
+# Disabled in favor of .github/workflows/deploy.yml to prevent competing Page deployments
 on:
-  push:
-    branches: ["main"]
   workflow_dispatch:
 
 permissions:
