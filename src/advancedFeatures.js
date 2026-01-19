@@ -427,37 +427,149 @@ export function displayGlossary() {
     console.log('Musical glossary displayed');
 }
 
+// Event handler for culture button clicks
+function handleCultureClick(e) {
+    const btn = e.target.closest('.culture-learn-btn');
+    if (btn) {
+        const cultureId = btn.dataset.cultureId;
+        console.log('🎯 Culture clicked:', cultureId);
+        const gridEl = e.currentTarget;
+        const cultures = gridEl._culturesToDisplay || [];
+        const culture = cultures.find(c => c.id === cultureId);
+        if (culture) {
+            console.log('📋 Showing details for:', culture.name);
+            showCultureDetail(culture);
+        } else {
+            console.warn('❌ Culture not found:', cultureId);
+        }
+    }
+}
+
 // Display Cultures Function
 export async function displayCultures() {
-    // Import culture data
-    const { getAllExpandedCultures } = await import('./expandedCultures.js');
-    const cultures = getAllExpandedCultures();
-    
-    // Update count
-    const countEl = document.getElementById('culture-count');
-    if (countEl) countEl.textContent = cultures.length;
-    
-    // Display culture cards
-    const gridEl = document.getElementById('culture-grid');
-    if (!gridEl) return;
-    
-    gridEl.innerHTML = '';
-    gridEl.className = 'culture-grid';
-    
-    cultures.forEach(culture => {
-        const card = document.createElement('div');
-        card.className = 'culture-card';
-        card.innerHTML = `
-            <div class="culture-emoji">${culture.emoji}</div>
-            <h3>${culture.name}</h3>
-            <p class="culture-region">${culture.region}</p>
-            <p class="culture-description">${culture.description}</p>
-            <button class="btn-primary" data-culture-id="${culture.id}">Learn More</button>
+    try {
+        console.log('🌍 displayCultures: Starting...');
+        
+        // Import culture data
+        const { getAllExpandedCultures } = await import('./expandedCultures.js');
+        const cultures = getAllExpandedCultures();
+        console.log('🌍 displayCultures: Loaded', cultures.length, 'cultures');
+        
+        // Update count
+        const countEl = document.getElementById('culture-count');
+        if (countEl) countEl.textContent = cultures.length;
+        
+        // Display culture cards
+        const gridEl = document.getElementById('culture-grid');
+        if (!gridEl) {
+            console.warn('❌ culture-grid element not found');
+            return;
+        }
+        
+        gridEl.innerHTML = '';
+        gridEl.className = 'culture-grid';
+        
+        cultures.forEach(culture => {
+            const card = document.createElement('div');
+            card.className = 'culture-card';
+            card.innerHTML = `
+                <div class="culture-emoji">${culture.emoji}</div>
+                <h3>${culture.name}</h3>
+                <p class="culture-region">${culture.region}</p>
+                <p class="culture-description">${culture.description}</p>
+                <button class="btn-primary culture-learn-btn" data-culture-id="${culture.id}">Learn More</button>
+            `;
+            gridEl.appendChild(card);
+        });
+        
+        console.log('✓ displayCultures: Rendered', cultures.length, 'cards');
+        
+        // Add event delegation for culture buttons (without cloning to preserve listeners)
+        gridEl.removeEventListener('click', handleCultureClick);
+        gridEl.addEventListener('click', handleCultureClick);
+        
+        // Store cultures reference for handler
+        gridEl._culturesToDisplay = cultures;
+        
+        console.log('✅ displayCultures: Complete');
+    } catch (error) {
+        console.error('❌ displayCultures error:', error);
+    }
+}
+
+// Show detailed culture information in a modal or expanded view
+function showCultureDetail(culture) {
+    try {
+        console.log('📋 showCultureDetail: Opening modal for', culture.name);
+        
+        // Create modal overlay
+        let modal = document.getElementById('culture-modal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'culture-modal';
+            modal.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.7);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 1000;
+                padding: 20px;
+            `;
+            document.body.appendChild(modal);
+        }
+        
+        modal.innerHTML = `
+            <div style="background: white; border-radius: 20px; padding: 30px; max-width: 600px; max-height: 80vh; overflow-y: auto; position: relative;">
+                <button id="close-culture-modal" style="position: absolute; top: 15px; right: 15px; background: #f44336; color: white; border: none; border-radius: 50%; width: 35px; height: 35px; font-size: 20px; cursor: pointer; line-height: 1;">×</button>
+                <div style="text-align: center; font-size: 80px; margin-bottom: 20px;">${culture.emoji}</div>
+                <h2 style="margin: 0 0 10px; color: #667eea;">${culture.name}</h2>
+                <p style="color: #666; font-size: 14px; margin: 0 0 20px;"><strong>Region:</strong> ${culture.region}</p>
+                <p style="line-height: 1.6; margin-bottom: 20px;">${culture.description}</p>
+                ${culture.instruments ? `
+                    <div style="margin-top: 20px;">
+                        <h3 style="color: #667eea;">🎺 Traditional Instruments</h3>
+                        <ul style="list-style: none; padding: 0;">
+                            ${culture.instruments.map(inst => `<li style="padding: 8px; background: #f5f5f5; margin: 5px 0; border-radius: 8px;">• ${inst}</li>`).join('')}
+                        </ul>
+                    </div>
+                ` : ''}
+                ${culture.characteristics ? `
+                    <div style="margin-top: 20px;">
+                        <h3 style="color: #667eea;">✨ Musical Characteristics</h3>
+                        <ul style="list-style: none; padding: 0;">
+                            ${Array.isArray(culture.characteristics) 
+                                ? culture.characteristics.map(char => `<li style="padding: 8px; background: #f5f5f5; margin: 5px 0; border-radius: 8px;">• ${char}</li>`).join('')
+                                : Object.entries(culture.characteristics).map(([key, value]) => `<li style="padding: 8px; background: #f5f5f5; margin: 5px 0; border-radius: 8px;"><strong>${key.charAt(0).toUpperCase() + key.slice(1)}:</strong> ${value}</li>`).join('')
+                            }
+                        </ul>
+                    </div>
+                ` : ''}
+            </div>
         `;
-        gridEl.appendChild(card);
-    });
-    
-    console.log(`Displayed ${cultures.length} cultures`);
+        
+        modal.style.display = 'flex';
+        
+        // Close modal handler
+        const closeBtn = document.getElementById('close-culture-modal');
+        const closeModal = () => {
+            modal.style.display = 'none';
+            console.log('📋 Modal closed');
+        };
+        
+        closeBtn.addEventListener('click', closeModal);
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) closeModal();
+        });
+        
+        console.log('✅ Modal displayed for', culture.name);
+    } catch (error) {
+        console.error('❌ showCultureDetail error:', error);
+    }
 }
 
 // Make functions globally available

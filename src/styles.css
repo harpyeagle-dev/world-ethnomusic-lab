@@ -1402,3 +1402,209 @@ details[open] summary {
     margin-bottom: 15px;
     font-size: 1.6em;
 }
+/* ===== ANALYZE PAGE ENHANCEMENTS ===== */
+
+/* Summary Panel */
+.summary-panel {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-radius: 12px;
+    padding: 20px;
+    margin: 20px 0;
+    box-shadow: 0 6px 15px rgba(102, 126, 234, 0.3);
+    animation: slideInDown 0.5s ease;
+}
+
+.summary-header {
+    font-size: 1.3em;
+    font-weight: bold;
+    margin-bottom: 15px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 15px;
+}
+
+.summary-stat {
+    background: rgba(255, 255, 255, 0.15);
+    padding: 12px;
+    border-radius: 8px;
+    text-align: center;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.stat-label {
+    display: block;
+    font-size: 0.85em;
+    opacity: 0.85;
+    margin-bottom: 4px;
+}
+
+.stat-value {
+    display: block;
+    font-size: 1.4em;
+    font-weight: bold;
+}
+
+/* Download Panel */
+.download-panel {
+    background: #f9f9fb;
+    border-radius: 12px;
+    padding: 18px;
+    margin: 20px 0;
+    border: 1px solid #e5e7eb;
+    animation: slideInUp 0.5s ease 0.1s backwards;
+}
+
+.download-header {
+    font-size: 1.1em;
+    font-weight: bold;
+    color: #333;
+    margin-bottom: 12px;
+}
+
+.download-buttons {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.btn-download, .btn-download-data {
+    padding: 10px 14px;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.9em;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn-download {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.btn-download:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 10px rgba(102, 126, 234, 0.4);
+}
+
+.btn-download-data {
+    background: #e5e7eb;
+    color: #333;
+}
+
+.btn-download-data:hover {
+    background: #d1d5db;
+    transform: translateY(-2px);
+}
+
+/* Charts Section */
+.charts-section {
+    animation: fadeIn 0.6s ease 0.2s backwards;
+}
+
+.analysis-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.analysis-card {
+    background: white;
+    border-radius: 12px;
+    padding: 18px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    animation: fadeInUp 0.6s ease backwards;
+    transition: all 0.3s ease;
+}
+
+.analysis-card:nth-child(1) { animation-delay: 0.2s; }
+.analysis-card:nth-child(2) { animation-delay: 0.3s; }
+.analysis-card:nth-child(3) { animation-delay: 0.4s; }
+.analysis-card:nth-child(4) { animation-delay: 0.5s; }
+.analysis-card:nth-child(5) { animation-delay: 0.6s; }
+
+.analysis-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+}
+
+.analysis-card h3 {
+    color: #667eea;
+    margin-bottom: 12px;
+    font-size: 1.1em;
+}
+
+.analysis-card canvas {
+    width: 100%;
+    height: auto;
+    border-radius: 8px;
+    background: #f9f9fb;
+}
+
+/* Animations */
+@keyframes slideInDown {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes slideInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .analysis-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .summary-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    
+    .download-buttons {
+        flex-direction: column;
+    }
+    
+    .btn-download, .btn-download-data {
+        width: 100%;
+        text-align: center;
+    }
+}

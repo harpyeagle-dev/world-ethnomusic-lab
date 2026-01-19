@@ -34,6 +34,9 @@
         <button id="record-btn" class="btn-primary">🎤 Start Recording</button>
         <button id="stop-record-btn" class="btn-secondary" disabled>⏹️ Stop Recording</button>
         <div id="recording-status"></div>
+        <div id="recorder-actions" style="margin-top:12px; display:none; flex-direction:row; gap:10px;">
+          <button id="analyze-recording" class="btn-primary">📊 Analyze Recording</button>
+        </div>
       </section>
       
       <section class="create-section">
@@ -49,6 +52,12 @@
           <button id="mix-scales" class="btn-primary">Mix Scales</button>
         </div>
         <canvas id="composition-canvas" width="800" height="400"></canvas>
+        <div id="mixed-scale-display" style="margin-top:12px;"></div>
+        <div class="composer-playback" style="margin-top: 15px; display: flex; gap: 10px;">
+          <button id="play-composition" class="btn-primary">▶️ Play Composition</button>
+          <button id="stop-composition" class="btn-secondary" style="display:none;">⏹️ Stop</button>
+          <button id="clear-composition" class="btn-secondary">🗑️ Clear Canvas</button>
+        </div>
       </section>
       
       <section class="create-section">

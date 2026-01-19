@@ -2,6 +2,7 @@ import Essentia from 'essentia.js/dist/essentia-wasm.web.js';
 import MLTrainer from './mlTrainer.js';
 import IndigenousTrainer from './indigenousTrainer.js';
 import { genreMLClassifier } from './genreMLModel.js';
+import EssentiaGenreClassifier from './essentiaGenreClassifier.js';
 
 export class AudioAnalyzer {
     constructor() {
@@ -15,6 +16,8 @@ export class AudioAnalyzer {
         this._hannCache = new Map();
         this.mlClassifier = genreMLClassifier;
         this.mlClassifierReady = false;
+        this.essentiaGenreClassifier = new EssentiaGenreClassifier();
+        this.essentiaGenreClassifierReady = false;
         this.indigenousClassifier = IndigenousTrainer;
         this.indigenousClassifierReady = false;
     }
@@ -50,19 +53,24 @@ export class AudioAnalyzer {
             this.essentia = new Essentia();
             await this.essentia.ready;
             this.essentiaReady = true;
-            console.log('Essentia.js initialized successfully');
+            console.log('✅ Essentia.js initialized successfully');
+            
+            // Initialize Essentia Genre Classifier
+            await this.essentiaGenreClassifier.initialize(this.essentia);
+            this.essentiaGenreClassifierReady = true;
         } catch (error) {
-            console.warn('Essentia.js initialization failed, falling back to basic analysis:', error);
+            console.warn('⚠️ Essentia.js initialization failed, falling back to basic analysis:', error);
             this.essentiaReady = false;
+            this.essentiaGenreClassifierReady = false;
         }
 
         // Initialize ML Genre Classifier
         try {
             await this.mlClassifier.loadModel();
             this.mlClassifierReady = true;
-            console.log('ML Genre Classifier initialized successfully');
+            console.log('✅ ML Genre Classifier initialized successfully');
         } catch (error) {
-            console.warn('ML Genre Classifier initialization failed, using heuristic classification:', error);
+            console.warn('⚠️ ML Genre Classifier initialization failed, using heuristic classification:', error);
             this.mlClassifierReady = false;
         }
 
@@ -73,10 +81,10 @@ export class AudioAnalyzer {
             if (indigenous) {
                 console.log('✅ Indigenous Classifier trained and ready');
             } else {
-                console.warn('Indigenous Classifier initialization failed');
+                console.warn('⚠️ Indigenous Classifier initialization failed');
             }
         } catch (error) {
-            console.warn('Indigenous Classifier initialization error:', error);
+            console.warn('⚠️ Indigenous Classifier initialization error:', error);
             this.indigenousClassifierReady = false;
         }
     }
@@ -267,6 +275,36 @@ export class AudioAnalyzer {
         // Essentia.js web build doesn't support all algorithms reliably
         // Fall back to basic analysis for now
         return this.analyzeSpectralFeatures(frequencyData);
+    }
+
+    /**
+     * Extract comprehensive Essentia features for genre classification
+     * This method combines multiple Essentia algorithms for robust genre prediction
+     * @param {Float32Array} audioBuffer - Raw audio samples
+     * @param {number} sampleRate - Sample rate (default: 44100)
+     * @returns {Promise<Object>} Comprehensive feature set for genre ML
+     */
+    async extractEssentiaGenreFeatures(audioBuffer, sampleRate = 44100) {
+        if (!this.essentiaGenreClassifierReady) {
+            console.warn('⚠️ Essentia Genre Classifier not ready');
+            return null;
+        }
+
+        try {
+            // Extract features using the specialized genre classifier
+            const features = this.essentiaGenreClassifier.extractGenreFeatures(audioBuffer, sampleRate);
+            
+            console.log('📊 Essentia genre features extracted:');
+            console.log('   - MFCC mean:', features.mfcc?.mfccMean?.length, 'coefficients');
+            console.log('   - Log-Mel spectrogram:', features.logMelSpec?.shape);
+            console.log('   - Chromagram shape:', features.chromagram?.shape);
+            console.log('   - Energy:', features.energy?.toFixed(4));
+            
+            return features;
+        } catch (error) {
+            console.error('❌ Error extracting Essentia genre features:', error);
+            return null;
+        }
     }
 
     /**
@@ -1146,7 +1184,7 @@ export class AudioAnalyzer {
             genres['Blues'] += 0.4;
             genres['Jazz'] += 0.3;
             genres['R&B/Soul'] += 0.3;
-            genres['Reggae'] += 0.4;
+            genres['Reggae'] += 0.8;  // Strong boost - reggae is typically 60-90 BPM
             genres['Folk'] += 0.25;
             genres['World'] += 0.25;
             // Penalize fast genres
@@ -1217,13 +1255,13 @@ export class AudioAnalyzer {
             genres['Jazz'] -= 0.2;
             genres['Indian Classical'] -= 0.15;
         } else if (regularity < 0.1) {
-            // Very low regularity - folk/world/acoustic often have natural variations
-            // BUT: Check for reggae signature first (moderate tempo + low regularity + some percussion)
-            if (tempo >= 80 && tempo < 130 && percussiveness >= 0.02 && percussiveness <= 0.10) {
-                // This could be reggae - don't penalize it
-                genres['Reggae'] += 0.8;
-                genres['Folk'] += 0.3;
-                genres['World'] += 0.3;
+            // Very low regularity - but check for reggae signature FIRST
+            // Reggae has characteristic off-beat that can read as low regularity
+            if (tempo >= 60 && tempo < 100 && percussiveness >= 0.015) {
+                // Strong reggae signature
+                genres['Reggae'] += 1.2;
+                genres['World'] += 0.2;
+                genres['Folk'] -= 0.3;  // Penalize folk when reggae signature present
             } else {
                 // Not reggae - boost world/folk as before
                 genres['Folk'] += 0.6;
@@ -1234,16 +1272,19 @@ export class AudioAnalyzer {
                 genres['Electronic'] -= 0.5;
                 genres['Pop'] -= 0.4;
                 genres['Hip Hop'] -= 0.4;
-                genres['Reggae'] -= 0.3;
             }
         } else if (regularity < 0.5) {
+            // Moderate-low regularity
+            if (tempo >= 60 && tempo < 100) {
+                // Likely reggae in this range with moderate-low regularity
+                genres['Reggae'] += 0.6;
+            }
             genres['World'] += 0.5;
             genres['Folk'] += 0.4;
             genres['Jazz'] += 0.4;
             genres['European Classical'] += 0.25;
             genres['Indian Classical'] += 0.2;
             genres['Latin'] += 0.3;
-            genres['Reggae'] += 0.2;  // Small reggae boost in this range too
             // Penalize very regular genres
             genres['Electronic'] -= 0.3;
             genres['Hip Hop'] -= 0.2;
@@ -1404,12 +1445,22 @@ export class AudioAnalyzer {
             genres['Indian Classical'] -= 0.2;
         }
         
-        // Reggae-specific: moderate tempo + very low regularity + moderate brightness
-        // Reggae often has swing/groove feel (low regularity) with moderate brightness
-        if (tempo >= 80 && tempo < 130 && regularity < 0.15 && brightness >= 0.35 && brightness <= 0.75) {
+        // Reggae-specific: slower tempo + characteristic off-beat rhythm (low-to-moderate regularity)
+        // Reggae: 60-90 BPM typical, can be up to 110, with distinctive syncopated feel
+        if (tempo >= 60 && tempo < 110 && regularity < 0.5) {
+            // Strong reggae signature
+            genres['Reggae'] += 1.0;
+            genres['Folk'] -= 0.5;  // Strong penalty to folk when reggae signature present
+            genres['World'] -= 0.2;
+            if (percussiveness >= 0.02 && percussiveness < 0.15) {
+                // Typical reggae percussion range
+                genres['Reggae'] += 0.5;
+            }
+        } else if (tempo >= 80 && tempo < 130 && regularity < 0.15 && brightness >= 0.35 && brightness <= 0.75) {
+            // Backup check for faster reggae variants
             genres['Reggae'] += 0.8;
             genres['Latin'] += 0.3;
-            genres['Folk'] -= 0.2;
+            genres['Folk'] -= 0.4;
             genres['World'] -= 0.2;
         }
 
@@ -1685,14 +1736,41 @@ export class AudioAnalyzer {
         let mlGenrePredictionForDebug = null;
         let mlOverride = false; // when true, ML results will override heuristic results
         
-        // First, try the new Essentia-based genre classifier
-        if (this.mlClassifierReady) {
+        // NEW: Try Essentia-based genre classification first (more reliable than ML model)
+        if (this.essentiaGenreClassifier && essentiaFeatures) {
             try {
+                console.log('🎵 Using Essentia.js direct genre classification');
+                const essentiaGenres = this.essentiaGenreClassifier.classifyGenreFromFeatures(essentiaFeatures);
+                
+                if (essentiaGenres && essentiaGenres.length > 0 && essentiaGenres[0].confidence > 0.3) {
+                    console.log('✅ Essentia genre classification successful, using as primary result');
+                    // Convert to expected format and return directly
+                    return essentiaGenres.map(g => ({
+                        genre: g.genre,
+                        confidence: g.confidence * 100 // Convert to percentage
+                    }));
+                } else {
+                    console.log('⚠️ Essentia genre confidence too low, falling back to ML/heuristics');
+                }
+            } catch (error) {
+                console.error('❌ Essentia genre classification error:', error);
+            }
+        }
+        
+        // FALLBACK: Try the ML-based genre classifier with comprehensive features
+        if (this.mlClassifierReady && essentiaFeatures) {
+            try {
+                console.log('🎼 Using Essentia features for ML genre classification');
                 const mlGenrePrediction = await this.mlClassifier.classifyGenre({
                     tempo,
-                    spectralCentroid,
-                    mfcc: essentiaFeatures?.mfcc || [],
-                    chroma: essentiaFeatures?.chroma || [],
+                    spectralCentroid: essentiaFeatures.spectralFeatures?.centroid || spectralCentroid,
+                    mfcc: essentiaFeatures.mfcc?.mfccMean || [],
+                    mfccVar: essentiaFeatures.mfcc?.mfccVar || [],
+                    chroma: essentiaFeatures.chromagram?.mean || [],
+                    logMelSpec: essentiaFeatures.logMelSpec,
+                    spectralFeatures: essentiaFeatures.spectralFeatures,
+                    temporalFeatures: essentiaFeatures.temporalFeatures,
+                    energy: essentiaFeatures.energy,
                     brightness,
                     percussiveness,
                     complexity,
@@ -1750,7 +1828,14 @@ export class AudioAnalyzer {
                     essentiaFeatures,
                     null
                 );
-                mlPrediction = MLTrainer.predict(mlFeatureVector);
+
+                // Guard against input shape mismatches
+                const expected = Array.isArray(MLTrainer.model.inputs) && MLTrainer.model.inputs[0]?.shape ? MLTrainer.model.inputs[0].shape[1] : null;
+                if (expected && mlFeatureVector.length !== expected) {
+                    console.warn(`[ML] Skipping raga model prediction: expected ${expected} features, got ${mlFeatureVector.length}`);
+                } else {
+                    mlPrediction = MLTrainer.predict(mlFeatureVector);
+                }
 
                 if (mlPrediction && mlPrediction.confidence > 0.5) {
                     console.log('=== ML PREDICTION (from Essentia features) ===');
@@ -1932,61 +2017,539 @@ export class AudioAnalyzer {
     }
 }
 
-// Global function for analyzing audio files - simplified version
+// Global function for analyzing audio files
 export async function analyzeAudioFile(audioBuffer, fileName, audioPlayer) {
     try {
-        console.log('Starting audio analysis for:', fileName);
+        console.log('🎵 Starting comprehensive audio analysis for:', fileName);
         
-        // Simple feature extraction without needing class methods
         if (!audioBuffer || !audioBuffer.getChannelData) {
             throw new Error('Invalid audio buffer');
         }
         
-        // Extract audio data
+        // Initialize analyzer
+        const analyzer = new AudioAnalyzer();
+        await analyzer.initialize();
+        
+        // Get audio data
         const channelData = audioBuffer.getChannelData(0);
         const sampleRate = audioBuffer.sampleRate;
-        
-        // Basic analysis without causing stack overflow
         const duration = audioBuffer.duration;
-        const rms = calculateRMS(channelData);
-        const peakAmplitude = findPeakAmplitude(channelData);
+        
+        console.log('📊 Buffer info: ', channelData.length, 'samples,', sampleRate, 'Hz,', duration, 'seconds');
+        
+        // Run analyses with methods that exist
+        const pitch = analyzer.detectPitch(channelData);
+        console.log('🎵 Pitch detected:', pitch > 0 ? pitch.toFixed(1) + ' Hz' : 'No clear pitch');
+        
+        const rhythmAnalysis = analyzer.analyzeRhythm(channelData, sampleRate);
+        console.log('🥁 Rhythm:', rhythmAnalysis.tempo.toFixed(0), 'BPM, regularity:', (rhythmAnalysis.regularity * 100).toFixed(1) + '%');
+        
+        // For spectral analysis, use the channelData directly
+        const spectralAnalysis = analyzer.analyzeSpectralFeatures(channelData);
+        console.log('📈 Spectral centroid:', spectralAnalysis.centroid.toFixed(3));
+        
+        // Extract Essentia features for better genre classification
+        let essentiaFeatures = null;
+        try {
+            console.log('🎵 Extracting Essentia.js features for genre classification...');
+            essentiaFeatures = await analyzer.extractEssentiaGenreFeatures(audioBuffer, sampleRate);
+            console.log('✅ Essentia features extracted successfully');
+        } catch (error) {
+            console.warn('⚠️ Essentia feature extraction failed:', error);
+        }
+        
+        // Genre classification - pass Essentia features for improved accuracy
+        const genreResults = await analyzer.classifyGenre(rhythmAnalysis, { scale: '' }, spectralAnalysis, essentiaFeatures);
+        console.log('🎭 Top genre:', genreResults[0]?.genre);
         
         const result = {
             fileName: fileName,
             duration: duration,
             sampleRate: sampleRate,
-            rms: rms,
-            peakAmplitude: peakAmplitude,
-            channels: audioBuffer.numberOfChannels,
+            pitch: pitch,
+            rhythmAnalysis: rhythmAnalysis,
+            spectralAnalysis: spectralAnalysis,
+            genre: genreResults && genreResults.length > 0 ? genreResults[0] : null,
+            topGenres: genreResults || [],
             timestamp: new Date().toISOString()
         };
         
-        console.log('Audio analysis complete:', result);
+        // Display results with charts and genre info
+        displayAnalysisResults(result, channelData);
+        
+        console.log('✅ Audio analysis complete');
         return result;
     } catch (error) {
-        console.error('Error analyzing audio:', error);
+        console.error('❌ Error analyzing audio:', error);
         throw error;
     }
 }
 
-// Helper function to calculate RMS (Root Mean Square)
-function calculateRMS(channelData) {
-    let sum = 0;
-    for (let i = 0; i < channelData.length; i++) {
-        sum += channelData[i] * channelData[i];
+// Display analysis results with visualizations
+function displayAnalysisResults(result, channelData) {
+    console.log('📊 displayAnalysisResults called with:', result);
+    
+    // Show results container
+    const resultsEl = document.getElementById('analysis-results');
+    if (resultsEl) {
+        resultsEl.style.display = 'block';
+        console.log('✓ Results container shown');
+    } else {
+        console.warn('❌ analysis-results element not found');
     }
-    return Math.sqrt(sum / channelData.length);
+
+    // Populate summary stats
+    try {
+        populateSummaryStats(result);
+        console.log('✓ Summary stats populated');
+    } catch (e) {
+        console.error('❌ Summary stats failed:', e);
+    }
+    
+    // Display waveform
+    try {
+        if (channelData && channelData.length > 0) {
+            displayWaveformAnalysis(channelData, result.sampleRate || 44100);
+            window.waveformChart = document.getElementById('waveform-chart');
+            console.log('✓ Waveform displayed');
+        } else {
+            console.warn('⚠️ No channel data for waveform');
+        }
+    } catch (e) {
+        console.error('❌ Waveform display failed:', e);
+    }
+    
+    // Display pitch analysis
+    try {
+        displayPitchAnalysis(result);
+        window.pitchChart = document.getElementById('pitch-chart');
+        console.log('✓ Pitch chart displayed');
+    } catch (e) {
+        console.error('❌ Pitch display failed:', e);
+    }
+    
+    // Display rhythm analysis
+    try {
+        displayRhythmAnalysis(result);
+        window.rhythmChart = document.getElementById('rhythm-chart');
+        console.log('✓ Rhythm chart displayed');
+    } catch (e) {
+        console.error('❌ Rhythm display failed:', e);
+    }
+    
+    // Display spectral features
+    try {
+        displaySpectralAnalysis(result);
+        window.spectralChart = document.getElementById('spectral-chart');
+        console.log('✓ Spectral chart displayed');
+    } catch (e) {
+        console.error('❌ Spectral display failed:', e);
+    }
+    
+    // Display melodic frequency analysis
+    try {
+        displayMelodicFrequencyAnalysis(result);
+        window.melodicChart = document.getElementById('melodic-chart');
+        console.log('✓ Melodic frequency chart displayed');
+    } catch (e) {
+        console.error('❌ Melodic frequency display failed:', e);
+    }
+    
+    // Display genre classification if available
+    if (result.genre) {
+        try {
+            displayGenreInfo(result.genre, result.topGenres);
+            console.log('✓ Genre info displayed');
+        } catch (e) {
+            console.error('❌ Genre display failed:', e);
+        }
+    }
 }
 
-// Helper function to find peak amplitude without stack overflow
-function findPeakAmplitude(channelData) {
-    let peak = 0;
-    for (let i = 0; i < channelData.length; i++) {
-        const abs = Math.abs(channelData[i]);
-        if (abs > peak) peak = abs;
+function populateSummaryStats(result) {
+    // Populate summary stats panel
+    const durationEl = document.getElementById('audio-duration');
+    const sampleRateEl = document.getElementById('audio-sample-rate');
+    const bpmEl = document.getElementById('audio-bpm');
+    const keyEl = document.getElementById('audio-key');
+    const brightnessEl = document.getElementById('audio-brightness');
+    const complexityEl = document.getElementById('audio-complexity');
+    
+    const duration = result.duration || 0;
+    const sampleRate = result.sampleRate || 44100;
+    const bpm = result.rhythmAnalysis?.tempo || 0;
+    const key = result.scaleAnalysis?.scale || 'Unknown';
+    const brightness = result.spectralAnalysis?.brightness || 0;
+    const complexity = result.complexity || 0;
+    
+    if (durationEl) durationEl.textContent = duration.toFixed(2) + 's';
+    if (sampleRateEl) sampleRateEl.textContent = (sampleRate / 1000).toFixed(1) + ' kHz';
+    if (bpmEl) bpmEl.textContent = bpm.toFixed(0) + ' BPM';
+    if (keyEl) keyEl.textContent = key;
+    if (brightnessEl) brightnessEl.textContent = (brightness * 100).toFixed(0) + '%';
+    if (complexityEl) complexityEl.textContent = (complexity * 100).toFixed(0) + '%';
+}
+
+function displayWaveformAnalysis(channelData, sampleRate) {
+    const canvas = document.getElementById('waveform-chart');
+    const infoDiv = document.getElementById('waveform-info');
+    
+    if (!canvas) {
+        console.warn('❌ waveform-chart canvas not found');
+        return;
     }
-    return peak;
+    if (!infoDiv) {
+        console.warn('❌ waveform-info div not found');
+        return;
+    }
+    
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#f5f5f5';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    const width = canvas.width;
+    const height = canvas.height;
+    const centerY = height / 2;
+    
+    // Downsample for performance: ~1000 samples displayed max
+    const downsampleFactor = Math.max(1, Math.floor(channelData.length / (width - 10)));
+    const samples = [];
+    
+    for (let i = 0; i < channelData.length; i += downsampleFactor) {
+        samples.push(channelData[i]);
+    }
+    
+    // Calculate RMS (loudness metric)
+    const rms = Math.sqrt(samples.reduce((sum, s) => sum + s * s, 0) / samples.length);
+    const peak = Math.max(...samples.map(Math.abs));
+    
+    // Draw waveform
+    ctx.strokeStyle = '#667eea';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    
+    samples.forEach((sample, i) => {
+        const x = 5 + (i / samples.length) * (width - 10);
+        const y = centerY - (sample * centerY * 0.9); // Scale amplitude
+        
+        if (i === 0) {
+            ctx.moveTo(x, y);
+        } else {
+            ctx.lineTo(x, y);
+        }
+    });
+    
+    ctx.stroke();
+    
+    // Draw center line
+    ctx.strokeStyle = '#ddd';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(5, centerY);
+    ctx.lineTo(width - 5, centerY);
+    ctx.stroke();
+    
+    // Info
+    infoDiv.innerHTML = `
+        <p><strong>Peak Amplitude:</strong> ${(peak * 100).toFixed(1)}%</p>
+        <p><strong>RMS (Loudness):</strong> ${(rms * 100).toFixed(1)}%</p>
+        <p><strong>Duration:</strong> ${(channelData.length / sampleRate).toFixed(2)}s</p>
+    `;
+}
+
+function displayPitchAnalysis(result) {
+    const canvas = document.getElementById('pitch-chart');
+    const infoDiv = document.getElementById('pitch-info');
+    
+    if (!canvas) {
+        console.warn('❌ pitch-chart canvas not found');
+        return;
+    }
+    if (!infoDiv) {
+        console.warn('❌ pitch-info div not found');
+        return;
+    }
+    
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Draw pitch visualization
+    const fundamentalFreq = Math.max(0, result.pitch || 0);
+    const pitchStrength = (result.pitch > 0) ? 0.8 : 0.2;
+    
+    // Draw frequency bar
+    ctx.fillStyle = '#667eea';
+    const barHeight = Math.min(1, (fundamentalFreq / 1000)) * canvas.height * 0.6;
+    ctx.fillRect(50, canvas.height - barHeight - 40, 100, barHeight);
+    
+    // Labels
+    ctx.fillStyle = '#333';
+    ctx.font = 'bold 14px Poppins, sans-serif';
+    ctx.fillText('Frequency', 50, canvas.height - 15);
+    ctx.fillText(`${fundamentalFreq.toFixed(1)} Hz`, 50, canvas.height - 40 - barHeight - 5);
+    
+    // Strength bar
+    ctx.fillStyle = '#4caf50';
+    const strengthHeight = pitchStrength * canvas.height * 0.6;
+    ctx.fillRect(200, canvas.height - strengthHeight - 40, 100, strengthHeight);
+    ctx.fillStyle = '#333';
+    ctx.fillText('Confidence', 200, canvas.height - 15);
+    ctx.fillText(`${(pitchStrength * 100).toFixed(1)}%`, 200, canvas.height - 40 - strengthHeight - 5);
+    
+    // Display info
+    const keyInfo = result.scaleAnalysis || { key: 'Unknown', scale: 'Unknown' };
+    infoDiv.innerHTML = `
+        <p><strong>Detected Pitch:</strong> ${fundamentalFreq.toFixed(1)} Hz</p>
+        <p><strong>Scale:</strong> ${keyInfo.scale || 'Unknown'}</p>
+        <p><strong>Confidence:</strong> ${(pitchStrength * 100).toFixed(1)}%</p>
+    `;
+}
+
+function displayRhythmAnalysis(result) {
+    const canvas = document.getElementById('rhythm-chart');
+    const infoDiv = document.getElementById('rhythm-info');
+    
+    if (!canvas) {
+        console.warn('❌ rhythm-chart canvas not found');
+        return;
+    }
+    if (!infoDiv) {
+        console.warn('❌ rhythm-info div not found');
+        return;
+    }
+    
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    const rhythm = result.rhythmAnalysis || {};
+    const tempo = rhythm.tempo || 0;
+    const regularity = rhythm.regularity || 0;
+    
+    // Draw tempo visualization
+    ctx.fillStyle = '#ff6b6b';
+    const tempoBar = Math.min(1, tempo / 200) * canvas.width * 0.6;
+    ctx.fillRect(50, 50, tempoBar, 40);
+    ctx.fillStyle = '#333';
+    ctx.font = 'bold 14px Poppins, sans-serif';
+    ctx.fillText(`Tempo: ${tempo.toFixed(0)} BPM`, 50, 30);
+    
+    // Draw regularity
+    ctx.fillStyle = '#ffd93d';
+    const regularityBar = Math.min(1, regularity) * canvas.width * 0.6;
+    ctx.fillRect(50, 130, regularityBar, 40);
+    ctx.fillStyle = '#333';
+    ctx.fillText(`Regularity: ${(regularity * 100).toFixed(1)}%`, 50, 110);
+    
+    infoDiv.innerHTML = `
+        <p><strong>Tempo:</strong> ${tempo.toFixed(0)} BPM</p>
+        <p><strong>Regularity:</strong> ${(regularity * 100).toFixed(1)}%</p>
+        <p><strong>Detected Onsets:</strong> ${rhythm.peakCount || 0}</p>
+    `;
+}
+
+function displaySpectralAnalysis(result) {
+    const canvas = document.getElementById('spectral-chart');
+    const infoDiv = document.getElementById('spectral-info');
+    
+    if (!canvas) {
+        console.warn('❌ spectral-chart canvas not found');
+        return;
+    }
+    if (!infoDiv) {
+        console.warn('❌ spectral-info div not found');
+        return;
+    }
+    
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Get spectral features
+    const spectral = result.spectralAnalysis || {};
+    let centroid = spectral.centroid || 0;
+    let rolloff = spectral.rolloff || 0;
+    let brightness = spectral.brightness || 0;
+    
+    // Normalize centroid and rolloff if they're in Hz (>1)
+    if (centroid > 1) centroid = Math.min(1, centroid / 22050);
+    if (rolloff > 1) rolloff = Math.min(1, rolloff / 22050);
+    
+    // Draw spectral features as bars
+    const features = [
+        { label: 'Centroid', value: centroid, color: '#667eea' },
+        { label: 'Rolloff', value: rolloff, color: '#4caf50' },
+        { label: 'Brightness', value: brightness, color: '#ffd93d' }
+    ];
+    
+    const barWidth = 60;
+    const spacing = 110;
+    
+    features.forEach((feature, i) => {
+        const x = 50 + i * spacing;
+        const height = Math.min(1, feature.value) * canvas.height * 0.6;
+        const y = canvas.height - height - 40;
+        
+        ctx.fillStyle = feature.color;
+        ctx.fillRect(x, y, barWidth, height);
+        
+        ctx.fillStyle = '#333';
+        ctx.font = '11px Poppins, sans-serif';
+        ctx.fillText(feature.label, x, canvas.height - 15);
+        ctx.fillText((feature.value * 100).toFixed(0) + '%', x + 5, y - 5);
+    });
+    
+    infoDiv.innerHTML = `
+        <p><strong>Spectral Centroid:</strong> ${spectral.centroid ? spectral.centroid.toFixed(0) + ' Hz' : 'N/A'}</p>
+        <p><strong>Rolloff:</strong> ${spectral.rolloff ? spectral.rolloff.toFixed(0) + ' Hz' : 'N/A'}</p>
+        <p><strong>Brightness:</strong> ${(brightness * 100).toFixed(1)}%</p>
+    `;
+}
+
+function displayGenreInfo(genre, topGenres) {
+    // Create or update genre section
+    let genreSection = document.getElementById('genre-analysis-section');
+    const gridEl = document.querySelector('.analysis-grid');
+    
+    if (!genreSection && gridEl) {
+        genreSection = document.createElement('div');
+        genreSection.id = 'genre-analysis-section';
+        genreSection.className = 'analysis-card';
+        genreSection.style.cssText = 'margin-top: 20px; grid-column: 1 / -1;';
+        gridEl.appendChild(genreSection);
+    }
+    
+    if (!genreSection) return;
+    
+    const genreLabel = genre.label || genre.genre || genre.predicted || 'Unknown';
+       // Confidence is already a percentage (0-100), not 0-1
+       const confidence = genre.confidence || genre.score || 0;
+       const confidencePercent = Number.isFinite(confidence) && confidence > 1 ? confidence : (confidence * 100);
+    
+    genreSection.innerHTML = `
+        <h3>🎵 Genre Analysis</h3>
+        <div style="padding: 15px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 10px; color: white;">
+            <p style="font-size: 24px; font-weight: bold; margin: 0;">${genreLabel}</p>
+               <p style="margin: 5px 0 0 0;">Confidence: ${confidencePercent.toFixed(1)}%</p>
+        </div>
+        ${topGenres && topGenres.length > 1 ? `
+            <div style="margin-top: 15px;">
+                <h4>Top Genres:</h4>
+                <ul style="list-style: none; padding: 0; margin: 0;">
+                       ${topGenres.slice(0, 5).map((g, idx) => {
+                           const genreName = g.genre || g.label || g;
+                           const genreConfidence = g.confidence || g.score || 0;
+                           // Also handle percentage vs decimal here
+                           const confPercent = Number.isFinite(genreConfidence) && genreConfidence > 1 ? genreConfidence : (genreConfidence * 100);
+                           return `
+                                <li style="padding: 8px; background: #f5f5f5; margin: 5px 0; border-radius: 8px; font-size: 13px;">
+                                    <strong>${idx + 1}. ${genreName}:</strong> ${confPercent.toFixed(1)}%
+                                </li>
+                            `;
+                        }).join('')}
+                </ul>
+            </div>
+        ` : ''}
+    `;
+}
+
+function displayMelodicFrequencyAnalysis(result) {
+    const canvas = document.getElementById('melodic-chart');
+    const infoDiv = document.getElementById('melodic-info');
+    
+    if (!canvas) {
+        console.warn('❌ melodic-chart canvas not found');
+        return;
+    }
+    if (!infoDiv) {
+        console.warn('❌ melodic-info div not found');
+        return;
+    }
+    
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Use available frequency data from analysis
+    const spectral = result.spectralAnalysis || {};
+    const pitch = result.pitch || 0;
+    const centroid = spectral.centroid || 0;
+    const rolloff = spectral.rolloff || 0;
+    
+    // Build frequency dataset
+    const frequencies = [];
+    if (pitch > 0 && pitch < 4000) frequencies.push(pitch);
+    if (centroid > 0 && centroid < 4000) frequencies.push(centroid);
+    if (rolloff > 0 && rolloff < 4000) frequencies.push(rolloff);
+    
+    const filteredPitches = frequencies.length > 0 ? frequencies : [];
+    
+    if (filteredPitches.length === 0) {
+        ctx.fillStyle = '#999';
+        ctx.font = '14px Poppins, sans-serif';
+        ctx.fillText('Limited frequency data', 50, canvas.height / 2);
+        infoDiv.innerHTML = `
+            <p><strong>Detected Pitch:</strong> ${pitch > 0 ? pitch.toFixed(0) + ' Hz' : 'Not detected'}</p>
+            <p><strong>Spectral Centroid:</strong> ${centroid > 0 ? centroid.toFixed(0) + ' Hz' : 'N/A'}</p>
+        `;
+        return;
+    }
+    
+    // Calculate statistics
+    const minPitch = Math.min(...filteredPitches);
+    const maxPitch = Math.max(...filteredPitches);
+    const avgPitch = filteredPitches.reduce((a, b) => a + b, 0) / filteredPitches.length;
+    
+    // Create frequency distribution histogram
+    const bins = 10;
+    const binSize = (maxPitch - minPitch) / bins;
+    const histogram = new Array(bins).fill(0);
+    
+    filteredPitches.forEach(pitch => {
+        const binIndex = Math.min(bins - 1, Math.floor((pitch - minPitch) / (binSize || 1)));
+        histogram[binIndex]++;
+    });
+    
+    const maxCount = Math.max(...histogram);
+    const barWidth = canvas.width / (bins + 2);
+    const margin = 40;
+    
+    // Draw histogram
+    histogram.forEach((count, i) => {
+        const x = margin + i * barWidth;
+        const height = (count / maxCount) * (canvas.height - margin * 2);
+        const y = canvas.height - height - margin;
+        
+        // Color gradient based on frequency
+        const hue = (i / bins) * 120; // Green to blue spectrum
+        ctx.fillStyle = `hsl(${hue}, 70%, 50%)`;
+        ctx.fillRect(x, y, barWidth * 0.8, height);
+    });
+    
+    // Draw baseline
+    ctx.strokeStyle = '#ccc';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(margin, canvas.height - margin);
+    ctx.lineTo(canvas.width - 20, canvas.height - margin);
+    ctx.stroke();
+    
+    // Labels
+    ctx.fillStyle = '#333';
+    ctx.font = '11px Poppins, sans-serif';
+    ctx.fillText(`${minPitch.toFixed(0)} Hz`, margin, canvas.height - 20);
+    ctx.fillText(`${maxPitch.toFixed(0)} Hz`, canvas.width - 60, canvas.height - 20);
+    
+    // Info panel
+    infoDiv.innerHTML = `
+        <p><strong>Frequency Range:</strong> ${minPitch.toFixed(1)} – ${maxPitch.toFixed(1)} Hz</p>
+        <p><strong>Mean Pitch:</strong> ${avgPitch.toFixed(1)} Hz</p>
+        <p><strong>Range Span:</strong> ${(maxPitch - minPitch).toFixed(1)} Hz</p>
+        <p><strong>Samples Analyzed:</strong> ${filteredPitches.length}</p>
+    `;
+    
+    // Store for download
+    window.melodicFrequencyChart = canvas;
 }
 
 // Make it globally available
 window.analyzeAudioFile = analyzeAudioFile;
+window.displayAnalysisResults = displayAnalysisResults;

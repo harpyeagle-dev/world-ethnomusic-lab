@@ -25,7 +25,7 @@
   </header>
 
   <main class="container">
-    <h2>Analyze Musical Patterns</h2>
+    <h2>🎵 Analyze Musical Patterns</h2>
     
     <div class="info-banner">
       <p>🌐 Interested in digital heritage and cultural analysis? <a href="https://www.digitalheritagegy.com" target="_blank">Visit Digital Heritage GY →</a></p>
@@ -37,24 +37,82 @@
       <p class="help-text">Upload audio (WAV, OGG, FLAC recommended • MP3/M4A have limited support)</p>
       <button id="cancel-analysis" class="btn-secondary" style="display:none;">✖️ Cancel Analysis</button>
     </div>
-    
+
     <div id="analysis-results" style="display:none;">
-      <div class="analysis-grid">
-        <div class="analysis-card">
-          <h3>Pitch Analysis</h3>
-          <canvas id="pitch-chart" width="400" height="300"></canvas>
-          <div id="pitch-info"></div>
+      <!-- Audio Info Summary -->
+      <div class="summary-panel">
+        <div class="summary-header">📊 Analysis Summary</div>
+        <div class="summary-grid">
+          <div class="summary-stat">
+            <span class="stat-label">Duration</span>
+            <span class="stat-value" id="audio-duration">--</span>
+          </div>
+          <div class="summary-stat">
+            <span class="stat-label">Sample Rate</span>
+            <span class="stat-value" id="audio-sample-rate">--</span>
+          </div>
+          <div class="summary-stat">
+            <span class="stat-label">Detected BPM</span>
+            <span class="stat-value" id="audio-bpm">--</span>
+          </div>
+          <div class="summary-stat">
+            <span class="stat-label">Scale/Key</span>
+            <span class="stat-value" id="audio-key">--</span>
+          </div>
+          <div class="summary-stat">
+            <span class="stat-label">Brightness</span>
+            <span class="stat-value" id="audio-brightness">--</span>
+          </div>
+          <div class="summary-stat">
+            <span class="stat-label">Complexity</span>
+            <span class="stat-value" id="audio-complexity">--</span>
+          </div>
         </div>
-        <div class="analysis-card">
-          <h3>Rhythm Analysis</h3>
-          <canvas id="rhythm-chart" width="400" height="300"></canvas>
-          <div id="rhythm-info"></div>
+      </div>
+
+      <!-- Download Controls -->
+      <div class="download-panel">
+        <div class="download-header">📥 Download Results</div>
+        <div class="download-buttons">
+          <button id="download-pitch-chart" class="btn-download">Pitch Chart</button>
+          <button id="download-rhythm-chart" class="btn-download">Rhythm Chart</button>
+          <button id="download-spectral-chart" class="btn-download">Spectral Chart</button>
+          <button id="download-melodic-chart" class="btn-download">Melodic Chart</button>
+          <button id="download-waveform-chart" class="btn-download">Waveform</button>
+          <button id="download-analysis-data" class="btn-download-data">JSON Data</button>
+          <button id="download-full-report" class="btn-download-data">Text Report</button>
         </div>
-        <div class="analysis-card">
-          <h3>Spectral Features</h3>
-          <canvas id="spectral-chart" width="400" height="300"></canvas>
-          <div id="spectral-info"></div>
-        </div>
+      </div>
+
+      <!-- Analysis Charts Grid -->
+      <div class="charts-section">
+        <h3 style="text-align: center; margin: 20px 0 15px; color: #333;">📈 Detailed Analysis</h3>
+        <div class="analysis-grid">
+          <div class="analysis-card">
+            <h3>🌊 Waveform</h3>
+            <canvas id="waveform-chart" width="400" height="200"></canvas>
+            <div id="waveform-info" style="font-size: 12px; color: #666; margin-top: 10px;"></div>
+          </div>
+          <div class="analysis-card">
+            <h3>🎚️ Pitch Analysis</h3>
+            <canvas id="pitch-chart" width="400" height="300"></canvas>
+            <div id="pitch-info"></div>
+          </div>
+          <div class="analysis-card">
+            <h3>🥁 Rhythm Analysis</h3>
+            <canvas id="rhythm-chart" width="400" height="300"></canvas>
+            <div id="rhythm-info"></div>
+          </div>
+          <div class="analysis-card">
+            <h3>🎼 Spectral Features</h3>
+            <canvas id="spectral-chart" width="400" height="300"></canvas>
+            <div id="spectral-info"></div>
+          </div>
+          <div class="analysis-card">
+            <h3>📊 Melodic Frequency</h3>
+            <canvas id="melodic-chart" width="400" height="300"></canvas>
+            <div id="melodic-info"></div>
+          </div>
       </div>
     </div>
   </main>

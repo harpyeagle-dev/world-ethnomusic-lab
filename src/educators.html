@@ -66,6 +66,22 @@
           </div>
         </div>
       </section>
+
+      <section class="educator-section">
+        <h3>🏅 Student Progress</h3>
+        <p>Overview of student progress and achievements</p>
+        <div class="progress-summary" style="background:#f9f9fb; border-radius:10px; padding:12px; margin:10px 0;">
+          <div class="level-row" style="display:flex; justify-content:space-between; gap:12px; align-items:center;">
+            <div><strong>Level:</strong> <span id="user-level">1</span></div>
+            <div><strong>XP:</strong> <span id="current-xp">0</span>/<span id="next-level-xp">100</span></div>
+          </div>
+          <div class="xp-bar" style="height:10px; background:#e5e7eb; border-radius:6px; overflow:hidden; margin-top:8px;">
+            <div id="xp-fill" style="height:10px; width:0%; background:#667eea;"></div>
+          </div>
+        </div>
+        <h4>Badges</h4>
+        <div id="badges-grid" class="badges-grid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:10px;"></div>
+      </section>
       
       <section class="educator-section">
         <h3>🤖 ML Trainer</h3>
